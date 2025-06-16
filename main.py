@@ -21,7 +21,7 @@ def main():
     env = gym.make(
         "Breakout-v4",
         render_mode="rgb_array",
-        frame_skip=4,
+        frameskip=4,
         repeat_action_probability=0.0,
     )
     rngs = nnx.Rngs(params=jax.random.PRNGKey(42))
