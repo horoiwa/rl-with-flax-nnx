@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "flax>=0.10.6",
-    "gymnasium[atari,mujoco]>=1.1.1",
+    "gymnasium[atari,mujoco,other]>=1.1.1",
     "jax>=0.6.1 ; sys_platform == 'win32' or sys_platform == 'darwin'",
     "jax[cuda12]>=0.6.1 ; sys_platform == 'linux'",
     "opencv-python>=4.11.0.86",

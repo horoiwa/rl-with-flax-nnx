@@ -31,7 +31,8 @@ class ChannelLastFrameStack(FrameStackObservation):
 def get_atari_env(
     env_id: str,
     render_mode: str = "rgb_array",
-    video_folder: Optional[Path] = None,
+    record_folder: Optional[Path] = None,
+    record_frequency: int = 50,
 ) -> gym.Env:
     """Create and return an Atari environment with preprocessing."""
     env = gym.make(
@@ -40,11 +41,11 @@ def get_atari_env(
         frameskip=1,
         repeat_action_probability=0.0,
     )
-    if video_folder is not None:
+    if record_folder is not None:
         env = RecordVideo(
             env=env,
-            video_folder=video_folder,
-            episode_trigger=lambda x: x % 50 == 0,
+            video_folder=record_folder,
+            episode_trigger=lambda x: x % record_frequency == 0,
         )
     env = TimeLimit(
         ChannelLastFrameStack(

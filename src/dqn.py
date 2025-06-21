@@ -63,10 +63,13 @@ class ReplayBuffer:
         self.buffer = deque(maxlen=maxlen)
         self.maxlen = maxlen
 
+    def __len__(self):
+        return len(self.buffer)
+
     def add(self, state, action, reward, next_state, done):
         self.buffer.append((state, action, reward, next_state, done))
 
-    def sample_minibatch(self, batch_size: int = 32):
+    def sample_batch(self, batch_size: int = 32):
         batch = random.sample(self.buffer, batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
 
@@ -78,12 +81,9 @@ class ReplayBuffer:
             "dones": jnp.array(dones),
         }
 
-    def __len__(self):
-        return len(self.buffer)
-
 
 @nnx.jit
-def train_step(online_network, target_network, data, optimizer, gamma: float = 0.99):
+def train_step(online_network, target_network, data, optimizer, gamma: float = 0.997):
 
     def loss_fn(online_network):
         q_values = online_network(data["states"])
@@ -93,12 +93,14 @@ def train_step(online_network, target_network, data, optimizer, gamma: float = 0
         max_next_q_values = jnp.max(next_q_values, axis=1)
         targets = data["rewards"] + gamma * max_next_q_values * (1 - data["dones"])
 
+        # MSE instead of Huber loss for simplicity
         loss = jnp.mean((q_values_selected - targets) ** 2)
         return loss
 
     loss, grads = nnx.value_and_grad(loss_fn)(online_network)
     optimizer.update(grads)
-    return loss
+
+    return loss.mean()
 
 
 def sync_target_network(online_network, target_network):
@@ -109,7 +111,12 @@ def sync_target_network(online_network, target_network):
 
 def main(env_id: str, outdir: str):
 
-    env = envs.get_atari_env(env_id)
+    outdir = Path(outdir)
+    if outdir.exists():
+        shutil.rmtree(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    env = envs.get_atari_env(env_id, record_folder=outdir, record_frequency=1000)
     action_dim: int = int(env.action_space.n)
 
     online_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
@@ -117,17 +124,15 @@ def main(env_id: str, outdir: str):
     optimizer = nnx.Optimizer(online_network, optax.adam(learning_rate=1e-4))
     replay_buffer = ReplayBuffer(maxlen=100_000)
 
-    utils.create_directory(outdir)
     writer = tensorboard.SummaryWriter(log_dir=f"{outdir}/logs")
 
     total_steps = 0
-    while total_steps < 2_000_000:
+    while total_steps < 5_000_000:
         state, info = env.reset()
         ep_rewards, ep_steps = 0, 0
 
         while True:
             epsilon: float = max(0.1, 1.0 - total_steps / 1_000_000)  # Epsilon decay
-            epsilon = 0.01
             if epsilon > random.random():
                 # Random action (exploration)
                 action = env.action_space.sample()
@@ -137,16 +142,18 @@ def main(env_id: str, outdir: str):
                 action: int = jnp.argmax(qvalues, axis=1).item()
 
             next_state, reward, terminated, truncated, info = env.step(action)
-            done: bool = terminated or truncated
-            replay_buffer.add(state, action, reward, next_state, done)
+            done = int(terminated or truncated)
+            replay_buffer.add(state, action, np.clip(reward, -1, 1), next_state, done)
 
             # Update network
-            if len(replay_buffer) > 1000 and n_steps % 4 == 0:
+            if len(replay_buffer) > 1000 and total_steps % 4 == 0:
                 batch_data = replay_buffer.sample_batch(32)
                 loss = train_step(online_network, target_network, batch_data, optimizer)
+                writer.scalar("loss", loss, total_steps)
 
             # Sync target network
             if total_steps % 10_000 == 0:
+                print("==== Syncing target networ ====")
                 sync_target_network(online_network, target_network)
 
             ep_rewards += reward
@@ -157,7 +164,7 @@ def main(env_id: str, outdir: str):
                 print(
                     f"Episode finished after {ep_steps} steps with reward {ep_rewards}"
                 )
-                writer.scalar("episode_reward", episode_reward, total_steps)
+                writer.scalar("episode_reward", ep_rewards, total_steps)
                 writer.scalar("episode_steps", ep_steps, total_steps)
                 break
 
@@ -166,4 +173,4 @@ def main(env_id: str, outdir: str):
 
 
 if __name__ == "__main__":
-    main(env_id="Breakout-v4", outdir="out/dqn/breakout")
+    main(env_id="Breakout-v4", outdir="out/dqn")
