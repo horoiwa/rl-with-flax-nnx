@@ -63,7 +63,4 @@ def get_atari_env(
         max_episode_steps=2000,
     )
 
-    try:
-        yield env
-    finally:
-        env.close()
+    return env

@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from flax.metrics.tensorboard import SummaryWriter
+from flax.metrics import tensorboard
 import optax
 
 from src.tools import envs
@@ -24,6 +24,7 @@ class DQNCNN(nnx.Module):
             out_features=32,
             kernel_size=(8, 8),
             strides=(4, 4),
+            padding="VALID",
             rngs=rngs,
         )
         self.conv2 = nnx.Conv(
@@ -31,6 +32,7 @@ class DQNCNN(nnx.Module):
             out_features=64,
             kernel_size=(4, 4),
             strides=(2, 2),
+            padding="VALID",
             rngs=rngs,
         )
         self.conv3 = nnx.Conv(
@@ -38,16 +40,19 @@ class DQNCNN(nnx.Module):
             out_features=64,
             kernel_size=(3, 3),
             strides=(1, 1),
+            padding="VALID",
             rngs=rngs,
         )
 
-        self.fc1 = nnx.Linear(in_features=3136, out_features=512, rngs=rngs)
+        self.fc1 = nnx.Linear(in_features=7 * 7 * 64, out_features=512, rngs=rngs)
         self.head = nnx.Linear(in_features=512, out_features=action_dim, rngs=rngs)
 
     def __call__(self, x):
+        assert x.ndim == 4, "Input must be (batch_size, height, width, channels)"
         x = nnx.relu(self.conv1(x))
         x = nnx.relu(self.conv2(x))
         x = nnx.relu(self.conv3(x))
+        x = jnp.reshape(x, (x.shape[0], -1))
         x = nnx.relu(self.fc1(x))
         qvalues = self.head(x)
         return qvalues
@@ -58,7 +63,7 @@ class ReplayBuffer:
         self.buffer = deque(maxlen=maxlen)
         self.maxlen = maxlen
 
-    def append(self, state, action, reward, next_state, done):
+    def add(self, state, action, reward, next_state, done):
         self.buffer.append((state, action, reward, next_state, done))
 
     def sample_minibatch(self, batch_size: int = 32):
@@ -104,15 +109,16 @@ def sync_target_network(online_network, target_network):
 
 def main(env_id: str, outdir: str):
 
-    utils.create_directory(outdir)
-
     env = envs.get_atari_env(env_id)
-    action_dim: int = env.action_space.n
+    action_dim: int = int(env.action_space.n)
 
     online_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
     target_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
     optimizer = nnx.Optimizer(online_network, optax.adam(learning_rate=1e-4))
     replay_buffer = ReplayBuffer(maxlen=100_000)
+
+    utils.create_directory(outdir)
+    writer = tensorboard.SummaryWriter(log_dir=f"{outdir}/logs")
 
     total_steps = 0
     while total_steps < 2_000_000:
@@ -121,13 +127,14 @@ def main(env_id: str, outdir: str):
 
         while True:
             epsilon: float = max(0.1, 1.0 - total_steps / 1_000_000)  # Epsilon decay
+            epsilon = 0.01
             if epsilon > random.random():
                 # Random action (exploration)
                 action = env.action_space.sample()
             else:
                 # Greedy action (exploitation)
-                qvalues = online_networkn(state)
-                import pdb; pdb.set_trace()  # fmt: skip
+                qvalues = online_network(jnp.expand_dims(state, axis=0))
+                action: int = jnp.argmax(qvalues, axis=1).item()
 
             next_state, reward, terminated, truncated, info = env.step(action)
             done: bool = terminated or truncated
@@ -139,19 +146,23 @@ def main(env_id: str, outdir: str):
                 loss = train_step(online_network, target_network, batch_data, optimizer)
 
             # Sync target network
-            if n_steps % 10_000 == 0:
+            if total_steps % 10_000 == 0:
                 sync_target_network(online_network, target_network)
 
-            episode_reward += reward
+            ep_rewards += reward
             ep_steps += 1
             total_steps += 1
 
             if done:
+                print(
+                    f"Episode finished after {ep_steps} steps with reward {ep_rewards}"
+                )
+                writer.scalar("episode_reward", episode_reward, total_steps)
+                writer.scalar("episode_steps", ep_steps, total_steps)
                 break
 
-        with SummaryWriter(logdir=f"{outdir}/logs") as writer:
-            writer.scalar("episode_reward", episode_reward, total_steps)
-            writer.scalar("episode_steps", ep_steps, total_steps)
+    env.close()
+    writer.close()
 
 
 if __name__ == "__main__":
