@@ -11,4 +11,6 @@ dependencies = [
     "jax[cuda12]>=0.6.1 ; sys_platform == 'linux'",
     "opencv-python>=4.11.0.86",
     "ray>=2.47.0",
+    "tensorboard>=2.19.0",
+    "tensorflow>=2.19.0",
 ]

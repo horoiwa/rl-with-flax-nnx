@@ -3,13 +3,29 @@ from pathlib import Path
 
 import ale_py
 import gymnasium as gym
-from gymnasium.wrappers import AtariPreprocessing, TimeLimit, FrameStack, RecordVideo
+from gymnasium.wrappers import (
+    AtariPreprocessing,
+    TimeLimit,
+    FrameStackObservation,
+    RecordVideo,
+)
+import numpy as np
 
 
-ENV_INFO = {
-    "Breakout": {"env_name": "ALE/Breakout-v5", "action_space": 4},
-    "CartPole": {"env_name": "CartPole-v1", "action_space": 2},
-}
+class ChannelLastFrameStack(FrameStackObservation):
+    """Frame stacking wrapper that outputs in channel-last format (H, W, C)."""
+
+    def reset(self, **kwargs):
+        obs, info = super().reset(**kwargs)
+        # Convert from (stack_size, H, W) to (H, W, stack_size)
+        obs = np.transpose(obs, (1, 2, 0))
+        return obs, info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = super().step(action)
+        # Convert from (stack_size, H, W) to (H, W, stack_size)
+        obs = np.transpose(obs, (1, 2, 0))
+        return obs, reward, terminated, truncated, info
 
 
 def get_atari_env(
@@ -18,16 +34,22 @@ def get_atari_env(
     video_folder: Optional[Path] = None,
 ) -> gym.Env:
     """Create and return an Atari environment with preprocessing."""
-    env_name = ENV_INFO[env_id]["env_name"]
+    env = gym.make(
+        env_id,
+        render_mode=render_mode,
+        frameskip=1,
+        repeat_action_probability=0.0,
+    )
+    if video_folder is not None:
+        env = RecordVideo(
+            env=env,
+            video_folder=video_folder,
+            episode_trigger=lambda x: x % 50 == 0,
+        )
     env = TimeLimit(
-        FrameStack(
+        ChannelLastFrameStack(
             AtariPreprocessing(
-                env=gym.make(
-                    env_name,
-                    render_mode=render_mode,
-                    frameskip=1,
-                    repeat_action_probability=0.0,
-                ),
+                env=env,
                 noop_max=10,
                 frame_skip=4,
                 terminal_on_life_loss=True,
@@ -36,21 +58,12 @@ def get_atari_env(
                 grayscale_newaxis=False,
                 scale_obs=True,
             ),
-            num_stack=4,
+            stack_size=4,
         ),
         max_episode_steps=2000,
     )
 
-    if video_folder is not None:
-        env = RecordVideo(
-            env=env,
-            video_folder=video_folder,
-            episode_trigger=lambda x: x % 25 == 0,
-        )
-
-    return env
-
-
-def get_action_space(env_id: str) -> int:
-    """Return the action space size for the given environment."""
-    return gym.make(env_id).action_space.n
+    try:
+        yield env
+    finally:
+        env.close()
