@@ -126,12 +126,12 @@ def main(env_id: str, outdir: str):
     replay_buffer = ReplayBuffer(maxlen=100_000)
 
     global_steps = 0
-    while total_steps < 2_000_000:
+    while global_steps < 2_000_000:
         state, info = env.reset()
         ep_rewards, ep_steps = 0, 0
 
         while True:
-            epsilon: float = max(0.02, 1.0 - total_steps / 1_000_000)  # Epsilon decay
+            epsilon: float = max(0.02, 1.0 - global_steps / 1_000_000)  # Epsilon decay
             if epsilon > random.random():
                 # Random action (exploration)
                 action = env.action_space.sample()
@@ -145,13 +145,13 @@ def main(env_id: str, outdir: str):
             replay_buffer.add(state, action, np.clip(reward, -1, 1), next_state, done)
 
             # Update network
-            if len(replay_buffer) > 1000 and total_steps % 4 == 0:
+            if len(replay_buffer) > 1000 and global_steps % 4 == 0:
                 batch_data = replay_buffer.sample_batch(32)
                 loss = train_step(online_network, target_network, batch_data, optimizer)
                 wandb.log({"loss": loss, "eps": epsilon}, step=global_steps)
 
             # Sync target network
-            if total_steps % 10_000 == 0:
+            if global_steps % 10_000 == 0:
                 print("==== Sync target network ====")
                 sync_target_network(online_network, target_network)
 
