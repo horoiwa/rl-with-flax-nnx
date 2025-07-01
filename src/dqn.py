@@ -9,12 +9,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
+import wandb
 
-from flax.metrics import tensorboard
 import optax
 
 from src.tools import envs
-from src.tools import utils
 
 
 class DQNCNN(nnx.Module):
@@ -27,6 +26,7 @@ class DQNCNN(nnx.Module):
             padding="VALID",
             rngs=rngs,
         )
+        self.norm1 = nnx.GroupNorm(num_features=32, num_groups=8, rngs=rngs)
         self.conv2 = nnx.Conv(
             in_features=32,
             out_features=64,
@@ -35,6 +35,7 @@ class DQNCNN(nnx.Module):
             padding="VALID",
             rngs=rngs,
         )
+        self.norm2 = nnx.GroupNorm(num_features=64, num_groups=8, rngs=rngs)
         self.conv3 = nnx.Conv(
             in_features=64,
             out_features=64,
@@ -43,15 +44,16 @@ class DQNCNN(nnx.Module):
             padding="VALID",
             rngs=rngs,
         )
+        self.norm3 = nnx.GroupNorm(num_features=64, num_groups=8, rngs=rngs)
 
         self.fc1 = nnx.Linear(in_features=7 * 7 * 64, out_features=512, rngs=rngs)
         self.head = nnx.Linear(in_features=512, out_features=action_dim, rngs=rngs)
 
     def __call__(self, x):
         assert x.ndim == 4, "Input must be (batch_size, height, width, channels)"
-        x = nnx.relu(self.conv1(x))
-        x = nnx.relu(self.conv2(x))
-        x = nnx.relu(self.conv3(x))
+        x = nnx.relu(self.norm1(self.conv1(x)))
+        x = nnx.relu(self.norm2(self.conv2(x)))
+        x = nnx.relu(self.norm3(self.conv3(x)))
         x = jnp.reshape(x, (x.shape[0], -1))
         x = nnx.relu(self.fc1(x))
         qvalues = self.head(x)
@@ -115,6 +117,7 @@ def main(env_id: str, outdir: str):
     if outdir.exists():
         shutil.rmtree(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+    wandb.init(project="dqn", mode="offline")
 
     env = envs.get_atari_env(env_id, record_folder=outdir, record_frequency=1000)
     action_dim: int = int(env.action_space.n)
@@ -123,8 +126,6 @@ def main(env_id: str, outdir: str):
     target_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
     optimizer = nnx.Optimizer(online_network, optax.adam(learning_rate=1e-4))
     replay_buffer = ReplayBuffer(maxlen=100_000)
-
-    writer = tensorboard.SummaryWriter(log_dir=f"{outdir}/logs")
 
     total_steps = 0
     while total_steps < 5_000_000:
@@ -149,7 +150,7 @@ def main(env_id: str, outdir: str):
             if len(replay_buffer) > 1000 and total_steps % 4 == 0:
                 batch_data = replay_buffer.sample_batch(32)
                 loss = train_step(online_network, target_network, batch_data, optimizer)
-                writer.scalar("loss", loss, total_steps)
+                wandb.log({"loss": loss})
 
             # Sync target network
             if total_steps % 10_000 == 0:
@@ -164,12 +165,11 @@ def main(env_id: str, outdir: str):
                 print(
                     f"Episode finished after {ep_steps} steps with reward {ep_rewards}"
                 )
-                writer.scalar("episode_reward", ep_rewards, total_steps)
-                writer.scalar("episode_steps", ep_steps, total_steps)
+                wandb.log({"episode_reward": ep_rewards, "episode_steps": ep_steps})
                 break
 
     env.close()
-    writer.close()
+    wandb.finish()
 
 
 if __name__ == "__main__":
