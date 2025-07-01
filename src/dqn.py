@@ -160,9 +160,12 @@ def main(env_id: str, outdir: str):
             global_steps += 1
 
             if done:
+                print("===="*5)
                 print(
                     f"Episode finished after {ep_steps} steps with reward {ep_rewards}"
                 )
+                print(f"Global step: {global_steps}")
+                print("===="*5)
                 wandb.log({"episode_reward": ep_rewards, "episode_steps": ep_steps}, step=global_steps)
                 break
 
