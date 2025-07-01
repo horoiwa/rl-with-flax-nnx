@@ -1,11 +1,8 @@
-from typing import Literal
-import functools
 import random
 from collections import deque
 from pathlib import Path
 import shutil
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
@@ -117,23 +114,24 @@ def main(env_id: str, outdir: str):
     if outdir.exists():
         shutil.rmtree(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-    wandb.init(project="dqn", mode="offline")
 
-    env = envs.get_atari_env(env_id, record_folder=outdir, record_frequency=1000)
+    env = envs.get_atari_env(
+        env_id, record_folder=outdir / "mp4", record_frequency=1000
+    )
     action_dim: int = int(env.action_space.n)
 
     online_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
     target_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
-    optimizer = nnx.Optimizer(online_network, optax.adam(learning_rate=1e-4))
+    optimizer = nnx.Optimizer(online_network, optax.adam(learning_rate=5e-4))
     replay_buffer = ReplayBuffer(maxlen=100_000)
 
     total_steps = 0
-    while total_steps < 5_000_000:
+    while total_steps < 2_000_000:
         state, info = env.reset()
         ep_rewards, ep_steps = 0, 0
 
         while True:
-            epsilon: float = max(0.1, 1.0 - total_steps / 1_000_000)  # Epsilon decay
+            epsilon: float = max(0.02, 1.0 - total_steps / 1_000_000)  # Epsilon decay
             if epsilon > random.random():
                 # Random action (exploration)
                 action = env.action_space.sample()
@@ -150,11 +148,11 @@ def main(env_id: str, outdir: str):
             if len(replay_buffer) > 1000 and total_steps % 4 == 0:
                 batch_data = replay_buffer.sample_batch(32)
                 loss = train_step(online_network, target_network, batch_data, optimizer)
-                wandb.log({"loss": loss})
+                wandb.log({"loss": loss, "eps": epsilon})
 
             # Sync target network
             if total_steps % 10_000 == 0:
-                print("==== Syncing target networ ====")
+                print("==== Sync target network ====")
                 sync_target_network(online_network, target_network)
 
             ep_rewards += reward
@@ -169,8 +167,11 @@ def main(env_id: str, outdir: str):
                 break
 
     env.close()
-    wandb.finish()
 
 
 if __name__ == "__main__":
-    main(env_id="Breakout-v4", outdir="out/dqn")
+    try:
+        wandb.init(project="dqn", mode="offline")
+        main(env_id="Breakout-v4", outdir="out/dqn")
+    finally:
+        wandb.finish()
