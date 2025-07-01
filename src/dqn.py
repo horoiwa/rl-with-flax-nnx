@@ -174,7 +174,7 @@ def main(env_id: str, outdir: str):
 
 if __name__ == "__main__":
     try:
-        wandb.init(project="dqn", mode="offline")
+        wandb.init(project="dqn", mode="disabled")
         main(env_id="Breakout-v4", outdir="out/dqn")
     finally:
         wandb.finish()

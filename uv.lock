@@ -1458,6 +1458,7 @@ name = "reinforcement-learning-with-flax-nnx"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "click" },
     { name = "flax" },
     { name = "gymnasium", extra = ["atari", "mujoco", "other"] },
     { name = "jax", extra = ["cuda12"] },
@@ -1468,6 +1469,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.2.1" },
     { name = "flax", specifier = ">=0.10.6" },
     { name = "gymnasium", extras = ["atari", "mujoco", "other"], specifier = ">=1.1.1" },
     { name = "jax", extras = ["cuda12"], specifier = ">=0.6.1" },
