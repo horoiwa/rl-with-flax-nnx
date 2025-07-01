@@ -125,7 +125,7 @@ def main(env_id: str, outdir: str):
     optimizer = nnx.Optimizer(online_network, optax.adam(learning_rate=5e-4))
     replay_buffer = ReplayBuffer(maxlen=100_000)
 
-    total_steps = 0
+    global_steps = 0
     while total_steps < 2_000_000:
         state, info = env.reset()
         ep_rewards, ep_steps = 0, 0
@@ -148,7 +148,7 @@ def main(env_id: str, outdir: str):
             if len(replay_buffer) > 1000 and total_steps % 4 == 0:
                 batch_data = replay_buffer.sample_batch(32)
                 loss = train_step(online_network, target_network, batch_data, optimizer)
-                wandb.log({"loss": loss, "eps": epsilon})
+                wandb.log({"loss": loss, "eps": epsilon}, step=global_steps)
 
             # Sync target network
             if total_steps % 10_000 == 0:
@@ -157,13 +157,13 @@ def main(env_id: str, outdir: str):
 
             ep_rewards += reward
             ep_steps += 1
-            total_steps += 1
+            global_steps += 1
 
             if done:
                 print(
                     f"Episode finished after {ep_steps} steps with reward {ep_rewards}"
                 )
-                wandb.log({"episode_reward": ep_rewards, "episode_steps": ep_steps})
+                wandb.log({"episode_reward": ep_rewards, "episode_steps": ep_steps}, step=global_steps)
                 break
 
     env.close()
