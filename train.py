@@ -6,14 +6,14 @@ from src import dqn
 def cli():
     pass
 
-@cli.command()
+@cli.command(name="dqn")
 @click.option('--use-wandb', is_flag=True, help='Enable wandb (default: disable)')
-def run_training_dqn(use_wandb: bool):
+def run_dqn(use_wandb: bool):
     try:
-        if use_wandb:
-            wandb.init(project="dqn", mode="online")
-        else:
-            wandb.init(project="dqn", mode="disabled")
+        wandb.init(
+            project="dqn",
+            mode="online" if use_wandb else "disabled",
+        )
         dqn.main(env_id="Breakout-v4", outdir="out/dqn")
     finally:
         wandb.finish()
