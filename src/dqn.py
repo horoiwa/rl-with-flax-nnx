@@ -10,7 +10,7 @@ import wandb
 
 import optax
 
-from src.tools import envs
+from src import utils
 
 
 class DQNCNN(nnx.Module):
@@ -115,7 +115,7 @@ def main(env_id: str, outdir: str):
         shutil.rmtree(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    env = envs.get_atari_env(
+    env = utils.get_atari_env(
         env_id, record_folder=outdir / "mp4", record_frequency=1000
     )
     action_dim: int = int(env.action_space.n)
