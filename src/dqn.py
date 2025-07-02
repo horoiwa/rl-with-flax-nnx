@@ -102,11 +102,6 @@ def train_step(online_network, target_network, data, optimizer, gamma: float = 0
     return loss.mean()
 
 
-def sync_target_network(online_network, target_network):
-    """Copy weights from online network to target network."""
-    state = nnx.state(online_network)
-    nnx.update(target_network, state)
-
 
 def main(env_id: str, outdir: str):
 
@@ -116,23 +111,23 @@ def main(env_id: str, outdir: str):
     outdir.mkdir(parents=True, exist_ok=True)
 
     env = utils.get_atari_env(
-        env_id, record_folder=outdir / "mp4", record_frequency=1000
+        env_id, record_folder=outdir / "mp4", record_frequency=250
     )
     action_dim: int = int(env.action_space.n)
 
     online_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
     target_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
-    optimizer = nnx.Optimizer(online_network, optax.adam(learning_rate=5e-4))
+    optimizer = nnx.Optimizer(online_network, optax.adam(learning_rate=2e-4))
     replay_buffer = ReplayBuffer(maxlen=100_000)
 
-    global_steps = 0
-    while global_steps < 2_000_000:
+    global_steps, global_episodes = 0, 0
+    while global_steps < 5_000_000:
         state, info = env.reset()
         ep_rewards, ep_steps = 0, 0
         lives = info["lives"]
 
         while True:
-            epsilon: float = max(0.05, 1.0 - global_steps / 250_000)  # Epsilon decay
+            epsilon: float = max(0.1, 1.0 - 0.9 * global_steps / 500_000)  # Epsilon decay
             if epsilon > random.random():
                 # Random action (exploration)
                 action = env.action_space.sample()
@@ -157,8 +152,9 @@ def main(env_id: str, outdir: str):
 
             # Sync target network
             if global_steps % 10_000 == 0:
-                print("==== Sync target network ====")
-                sync_target_network(online_network, target_network)
+                """Copy weights from online network to target network."""
+                state = nnx.state(online_network)
+                nnx.update(target_network, state)
 
             ep_rewards += reward
             ep_steps += 1
@@ -167,10 +163,11 @@ def main(env_id: str, outdir: str):
             if done:
                 print("===="*5)
                 print(
-                    f"Episode finished after {ep_steps} steps with reward {ep_rewards}"
+                    f"Episode {global_episodes} finished after {ep_steps} steps with reward {ep_rewards}"
                 )
                 print(f"Global step: {global_steps}")
                 wandb.log({"episode_reward": ep_rewards, "episode_steps": ep_steps}, step=global_steps)
+                global_episodes += 1
                 break
 
     env.close()
