@@ -129,9 +129,10 @@ def main(env_id: str, outdir: str):
     while global_steps < 2_000_000:
         state, info = env.reset()
         ep_rewards, ep_steps = 0, 0
+        lives = info["lives"]
 
         while True:
-            epsilon: float = max(0.02, 1.0 - global_steps / 1_000_000)  # Epsilon decay
+            epsilon: float = max(0.05, 1.0 - global_steps / 250_000)  # Epsilon decay
             if epsilon > random.random():
                 # Random action (exploration)
                 action = env.action_space.sample()
@@ -141,8 +142,12 @@ def main(env_id: str, outdir: str):
                 action: int = jnp.argmax(qvalues, axis=1).item()
 
             next_state, reward, terminated, truncated, info = env.step(action)
-            done = int(terminated or truncated)
-            replay_buffer.add(state, action, np.clip(reward, -1, 1), next_state, done)
+            done: bool = terminated or truncated
+            # life loss as episode end
+            life_loss: bool = True if lives != info["lives"] else False
+            lives = info["lives"]
+
+            replay_buffer.add(state, action, np.clip(reward, -1, 1), next_state, int(life_loss))
 
             # Update network
             if len(replay_buffer) > 1000 and global_steps % 4 == 0:
@@ -165,7 +170,6 @@ def main(env_id: str, outdir: str):
                     f"Episode finished after {ep_steps} steps with reward {ep_rewards}"
                 )
                 print(f"Global step: {global_steps}")
-                print("===="*5)
                 wandb.log({"episode_reward": ep_rewards, "episode_steps": ep_steps}, step=global_steps)
                 break
 
