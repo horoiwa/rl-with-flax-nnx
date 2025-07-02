@@ -68,7 +68,7 @@ class ReplayBuffer:
     def add(self, state, action, reward, next_state, done):
         self.buffer.append((state, action, reward, next_state, done))
 
-    def sample_batch(self, batch_size: int = 32):
+    def sample_batch(self, batch_size: int):
         batch = random.sample(self.buffer, batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
 
@@ -146,15 +146,14 @@ def main(env_id: str, outdir: str):
 
             # Update network
             if len(replay_buffer) > 1000 and global_steps % 4 == 0:
-                batch_data = replay_buffer.sample_batch(32)
+                batch_data = replay_buffer.sample_batch(64)
                 loss = train_step(online_network, target_network, batch_data, optimizer)
                 wandb.log({"loss": loss, "eps": epsilon}, step=global_steps)
 
             # Sync target network
             if global_steps % 10_000 == 0:
                 """Copy weights from online network to target network."""
-                state = nnx.state(online_network)
-                nnx.update(target_network, state)
+                nnx.update(target_network, nnx.state(online_network))
 
             ep_rewards += reward
             ep_steps += 1
