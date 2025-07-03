@@ -122,7 +122,7 @@ def main(env_id: str, outdir: str):
     online_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
     target_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
     optimizer = nnx.Optimizer(online_network, optax.adam(learning_rate=2e-4))
-    replay_buffer = ReplayBuffer(maxlen=1_000_000)
+    replay_buffer = ReplayBuffer(maxlen=250_000)
 
     global_steps, global_episodes = 0, 0
     while global_steps < 5_000_000:
@@ -131,7 +131,7 @@ def main(env_id: str, outdir: str):
         lives = info["lives"]
 
         while True:
-            epsilon: float = max(0.1, 1.0 - 0.9 * global_steps / 500_000)  # Epsilon decay
+            epsilon: float = max(0.1, 1.0 - 0.9 * global_steps / 100_000)  # Epsilon decay
             if epsilon > random.random():
                 # Random action (exploration)
                 action = env.action_space.sample()
@@ -159,6 +159,7 @@ def main(env_id: str, outdir: str):
                 """Copy weights from online network to target network."""
                 nnx.update(target_network, nnx.state(online_network))
 
+            state = next_state
             ep_rewards += reward
             ep_steps += 1
             global_steps += 1
