@@ -4,13 +4,13 @@ from pathlib import Path
 import shutil
 import pickle
 
-import lz4.frame as lz4f
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
-import wandb
-
 import optax
+import orbax.checkpoint as ocp
+import wandb
+import lz4.frame as lz4f
 
 from src import utils
 
@@ -106,7 +106,6 @@ def train_step(online_network, target_network, data, optimizer, gamma: float = 0
     return loss.mean()
 
 
-
 def main(env_id: str, outdir: str):
 
     outdir = Path(outdir)
@@ -115,7 +114,7 @@ def main(env_id: str, outdir: str):
     outdir.mkdir(parents=True, exist_ok=True)
 
     env = utils.get_atari_env(
-        env_id, record_folder=outdir / "mp4", record_frequency=250
+        env_id, record_folder=outdir / "mp4", record_frequency=100
     )
     action_dim: int = int(env.action_space.n)
 
@@ -125,13 +124,13 @@ def main(env_id: str, outdir: str):
     replay_buffer = ReplayBuffer(maxlen=250_000)
 
     global_steps, global_episodes = 0, 0
-    while global_steps < 5_000_000:
+    while global_steps < 2_000_000:
         state, info = env.reset()
         ep_rewards, ep_steps = 0, 0
         lives = info["lives"]
 
         while True:
-            epsilon: float = max(0.1, 1.0 - 0.9 * global_steps / 100_000)  # Epsilon decay
+            epsilon: float = max(0.1, 1.0 - 0.9 * global_steps / 100_000)
             if epsilon > random.random():
                 # Random action (exploration)
                 action = env.action_space.sample()
@@ -146,7 +145,9 @@ def main(env_id: str, outdir: str):
             life_loss: bool = True if lives != info["lives"] else False
             lives = info["lives"]
 
-            replay_buffer.add(state, action, np.clip(reward, -1, 1), next_state, int(life_loss))
+            replay_buffer.add(
+                state, action, np.clip(reward, -1, 1), next_state, int(life_loss)
+            )
 
             # Update network
             if len(replay_buffer) > 1000 and global_steps % 4 == 0:
@@ -157,7 +158,24 @@ def main(env_id: str, outdir: str):
             # Sync target network
             if global_steps % 10_000 == 0:
                 """Copy weights from online network to target network."""
-                nnx.update(target_network, nnx.state(online_network))
+                _graphdef, _state = nnx.split(online_network)
+                nnx.update(target_network, _state)
+
+            # Save model checkpoint
+            if global_steps % 100_000 == 0:
+                checkpointer = ocp.StandardCheckpointer()
+                ckpt_dir: Path = (outdir / f"ckpt_{global_steps}").resolve()
+
+                _graphdef, _state = nnx.split(online_network)
+                checkpointer.save(ckpt_dir, _state)
+
+                # FYI: Restore from ckpt
+                # abstract_model = nnx.eval_shape(
+                #     lambda: DQNCNN(action_dim, rngs=nnx.Rngs(0))
+                # )
+                # _graphdef, _abstract_state = nnx.split(abstract_model)
+                # _state_restored = checkpointer.restore(ckpt_dir, _abstract_state)
+                # network_restored = nnx.merge(_graphdef, _state_restored)
 
             state = next_state
             ep_rewards += reward
@@ -165,12 +183,15 @@ def main(env_id: str, outdir: str):
             global_steps += 1
 
             if done:
-                print("===="*5)
+                print("====" * 5)
                 print(
                     f"Episode {global_episodes} finished after {ep_steps} steps with reward {ep_rewards}"
                 )
                 print(f"Global step: {global_steps}")
-                wandb.log({"episode_reward": ep_rewards, "episode_steps": ep_steps}, step=global_steps)
+                wandb.log(
+                    {"episode_reward": ep_rewards, "episode_steps": ep_steps},
+                    step=global_steps,
+                )
                 global_episodes += 1
                 break
 

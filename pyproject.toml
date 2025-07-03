@@ -11,6 +11,7 @@ dependencies = [
     "jax[cuda12]>=0.6.1",
     "lz4>=4.4.4",
     "opencv-python>=4.11.0.86",
+    "orbax>=0.1.9",
     "ray>=2.47.0",
     "wandb>=0.20.1",
 ]
