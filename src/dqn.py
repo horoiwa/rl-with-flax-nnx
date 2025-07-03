@@ -124,7 +124,7 @@ def main(env_id: str, outdir: str):
     replay_buffer = ReplayBuffer(maxlen=250_000)
 
     global_steps, global_episodes = 0, 0
-    while global_steps < 2_000_000:
+    while global_steps < 1_000_000:
         state, info = env.reset()
         ep_rewards, ep_steps = 0, 0
         lives = info["lives"]
