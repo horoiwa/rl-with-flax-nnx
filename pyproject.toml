@@ -9,6 +9,7 @@ dependencies = [
     "flax>=0.10.6",
     "gymnasium[atari,mujoco,other]>=1.1.1",
     "jax[cuda12]>=0.6.1",
+    "lz4>=4.4.4",
     "opencv-python>=4.11.0.86",
     "ray>=2.47.0",
     "wandb>=0.20.1",

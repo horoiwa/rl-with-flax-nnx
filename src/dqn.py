@@ -2,7 +2,9 @@ import random
 from collections import deque
 from pathlib import Path
 import shutil
+import pickle
 
+import lz4.frame as lz4f
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
@@ -66,11 +68,13 @@ class ReplayBuffer:
         return len(self.buffer)
 
     def add(self, state, action, reward, next_state, done):
-        self.buffer.append((state, action, reward, next_state, done))
+        data = (state, action, reward, next_state, done)
+        self.buffer.append(lz4f.compress(pickle.dumps(data)))
 
     def sample_batch(self, batch_size: int):
-        batch = random.sample(self.buffer, batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
+        samples = random.sample(self.buffer, batch_size)
+        samples = [pickle.loads(lz4f.decompress(data)) for data in samples]
+        states, actions, rewards, next_states, dones = zip(*samples)
 
         return {
             "states": jnp.array(states),
@@ -118,7 +122,7 @@ def main(env_id: str, outdir: str):
     online_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
     target_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
     optimizer = nnx.Optimizer(online_network, optax.adam(learning_rate=2e-4))
-    replay_buffer = ReplayBuffer(maxlen=100_000)
+    replay_buffer = ReplayBuffer(maxlen=1_000_000)
 
     global_steps, global_episodes = 0, 0
     while global_steps < 5_000_000:
