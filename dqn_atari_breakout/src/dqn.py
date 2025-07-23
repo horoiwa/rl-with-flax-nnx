@@ -120,11 +120,11 @@ def main(env_id: str, outdir: str):
 
     online_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
     target_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
-    optimizer = nnx.Optimizer(online_network, optax.adam(learning_rate=5e-4))
+    optimizer = nnx.Optimizer(online_network, optax.adam(learning_rate=2e-4))
     replay_buffer = ReplayBuffer(maxlen=250_000)
 
     global_steps, global_episodes = 0, 0
-    while global_steps < 1_000_000:
+    while global_steps < 2_000_000:
         state, info = env.reset()
         ep_rewards, ep_steps = 0, 0
         lives = info["lives"]
@@ -201,6 +201,6 @@ def main(env_id: str, outdir: str):
 if __name__ == "__main__":
     try:
         wandb.init(project="dqn", mode="disabled")
-        main(env_id="Breakout-v4", outdir="out/dqn")
+        main(env_id="Breakout-v4", outdir="log")
     finally:
         wandb.finish()
