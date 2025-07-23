@@ -29,11 +29,10 @@
 ```
 
 
-### DQN
-
-### PPO
+### DQN (Atari/Breakout)
 
 
+### PPO (IssacLab/UnitreeGo1)
 
 
 
@@ -45,3 +44,4 @@
 [Gymnasium](https://gymnasium.farama.org/)
 
 [ALE](https://ale.farama.org/)
+

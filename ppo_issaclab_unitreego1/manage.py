@@ -11,10 +11,10 @@ def cli():
 def run_dqn(use_wandb: bool):
     try:
         wandb.init(
-            project="dqn",
+            project="ppo",
             mode="online" if use_wandb else "disabled",
         )
-        dqn.main(env_id="Breakout-v4", outdir="out/dqn")
+        dqn.main(env_id="unitreego1", outdir="log/")
     finally:
         wandb.finish()
 
