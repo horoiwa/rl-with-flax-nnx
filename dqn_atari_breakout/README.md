@@ -13,9 +13,7 @@ uv sync
 `uv run python manage.py --use-wandb`
 
 **NOTE:**
-If you get the error of "opencv-python package not installed, run `pip install gym[other]` to get dependencies for atari", please install `libgl1`
-
-`apt update && apt install libgl1`
+If you get the error of "opencv-python package not installed, run `pip install gym[other]` to get dependencies for atari", install `libgl1` by `apt update && apt install libgl1`
 
 ## References
 
