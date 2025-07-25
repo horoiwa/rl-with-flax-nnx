@@ -8,7 +8,7 @@ def cli():
     pass
 
 
-@cli.command(name="dqn")
+@cli.command(name="ppo")
 @click.option("--use-wandb", is_flag=True, help="Enable wandb (default: disable)")
 def run_dqn(use_wandb: bool):
     try:

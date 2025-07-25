@@ -1,0 +1,10 @@
+[project]
+name = "ppo-issaclab-unitreego1"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flax>=0.10.7",
+    "jax[cuda12]>=0.6.2",
+]
