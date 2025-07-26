@@ -16,7 +16,7 @@ def run_dqn(use_wandb: bool):
             project="ppo",
             mode="online" if use_wandb else "disabled",
         )
-        ppo.main(env_id="unitreego1", outdir="log/")
+        ppo.main(env_id="Isaac-Velocity-Flat-Unitree-Go2-v0", outdir="log/")
     finally:
         wandb.finish()
 
