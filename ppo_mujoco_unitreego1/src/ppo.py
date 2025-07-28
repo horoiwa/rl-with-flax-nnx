@@ -21,6 +21,23 @@ from mujoco_playground import wrapper, registry
 from mujoco_playground.config import locomotion_params
 
 
+def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
+    env, env_cfg = registry.load(env_id), registry.get_default_config(env_id)
+    obs_dim: int = env.observation_size["state"][0]
+    action_dim: int = env.action_size
+    if auto_reset:
+        env = wrapper.BraxAutoResetWrapper(env)
+
+    if num_envs == 1:
+        reset_fn = jax.jit(env.reset)
+        step_fn = jax.jit(env.step)
+    else:
+        reset_fn = jax.jit(jax.vmap(env.reset, in_axes=(0,)))
+        step_fn = jax.jit(jax.vmap(env.step, in_axes=(0, 0)))
+
+    return env, env_cfg, obs_dim, action_dim, reset_fn, step_fn
+
+
 class GaussianPolicy(nnx.Module):
     def __init__(self, obs_dim, action_dim: int, rngs: nnx.Rngs):
 
@@ -63,6 +80,13 @@ class ValueNN(nnx.Module):
         return out
 
 
+@nnx.jit
+def sample_action(policy_nn, obs, key: jax.random.PRNGKey):
+    mu, std = policy_nn(obs)
+    actions = mu + std * jax.random.normal(key, shape=(mu.shape[1],))
+    return actions
+
+
 # @nnx.jit
 def train_step(
     data,
@@ -91,30 +115,11 @@ def train_step(
     return ploss.mean(), vloss.mean()
 
 
-def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
-    env, env_cfg = registry.load(env_id), registry.get_default_config(env_id)
-    obs_dim: int = env.observation_size["state"][0]
-    action_dim: int = env.action_size
-    if auto_reset:
-        env = wrapper.BraxAutoResetWrapper(env)
-
-    if num_envs == 1:
-        reset_fn = jax.jit(env.reset)
-        step_fn = jax.jit(env.step)
-    else:
-        reset_fn = jax.jit(jax.vmap(env.reset, in_axes=(0,)))
-        step_fn = jax.jit(jax.vmap(env.step, in_axes=(0, 0)))
-
-    return env, env_cfg, obs_dim, action_dim, reset_fn, step_fn
-
-
 def train(env_id: str, num_envs: int, outdir: str):
     outdir = Path(outdir)
     if outdir.exists():
         shutil.rmtree(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-
-    rng = jax.random.PRNGKey(0)
 
     (env, env_cfg, obs_dim, action_dim, reset_fn, step_fn) = create_env(
         env_id, num_envs=num_envs, auto_reset=True
@@ -123,12 +128,23 @@ def train(env_id: str, num_envs: int, outdir: str):
     policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
     value_nn = ValueNN(obs_dim=obs_dim, rngs=nnx.Rngs(0))
 
-    rng, keys = jax.random.split(rng)
-    states = reset_fn(jax.random.split(keys, num_envs))
+    # vmap the policy action sampling for batch processing
+    vmapped_sample_action = jax.vmap(policy_nn.sample_action, in_axes=(0, 0))
+
+    rng, *keys = jax.random.split(jax.random.PRNGKey(0), num_envs + 1)
+    states = reset_fn(jnp.array(keys))
     while (i := 0) <= 100_000_000:
-        trajectory = []
+        # In a real PPO implementation, this is where you'd collect rollouts
+        trajcetory = []
         for _ in range(5):
+            rng, key = jax.random.split(rng)
+            actions = policy_nn.sample_action(states.obs["state"], key)
+            states = step_fn(states, actions)
+            trajcetory.append(states)
             i += num_envs
+            print(states.done)
+            if states.done.sum() > 0:
+                import pdb; pdb.set_trace()  # fmt: skip
 
 
 def evaluate(env_id: str, n_episodes: int, outdir: str):
