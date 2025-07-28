@@ -58,6 +58,7 @@ class GaussianPolicy(nnx.Module):
         std = jnp.exp(self.log_std)
         return mu, std
 
+    # @nnx.jit
     def sample_action(self, obs, key: jax.random.PRNGKey):
         mu, std = self(obs)
         action = mu + std * jax.random.normal(key, shape=(self.action_dim,))
@@ -78,13 +79,6 @@ class ValueNN(nnx.Module):
         x = nnx.elu(self.dense_3(x))
         out = self.out(x)
         return out
-
-
-@nnx.jit
-def sample_action(policy_nn, obs, key: jax.random.PRNGKey):
-    mu, std = policy_nn(obs)
-    actions = mu + std * jax.random.normal(key, shape=(mu.shape[1],))
-    return actions
 
 
 # @nnx.jit
@@ -128,9 +122,6 @@ def train(env_id: str, num_envs: int, outdir: str):
     policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
     value_nn = ValueNN(obs_dim=obs_dim, rngs=nnx.Rngs(0))
 
-    # vmap the policy action sampling for batch processing
-    vmapped_sample_action = jax.vmap(policy_nn.sample_action, in_axes=(0, 0))
-
     rng, *keys = jax.random.split(jax.random.PRNGKey(0), num_envs + 1)
     states = reset_fn(jnp.array(keys))
     while (i := 0) <= 100_000_000:
@@ -143,8 +134,7 @@ def train(env_id: str, num_envs: int, outdir: str):
             trajcetory.append(states)
             i += num_envs
             print(states.done)
-            if states.done.sum() > 0:
-                import pdb; pdb.set_trace()  # fmt: skip
+        import pdb; pdb.set_trace()  # fmt: skip
 
 
 def evaluate(env_id: str, n_episodes: int, outdir: str):
