@@ -12,7 +12,9 @@ import numpy as np
 from flax import nnx
 import optax
 import orbax.checkpoint as ocp
-from brax.training.agents.ppo import train
+
+# from brax.training.agents.ppo import train as brax_train
+# from brax import envs as brax_envs
 
 
 from mujoco_playground import wrapper, registry
@@ -87,14 +89,18 @@ def train_step(
     return ploss.mean(), vloss.mean()
 
 
-def create_env(env_id: str, num_envs: int = 1):
+def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
     env, env_cfg = registry.load(env_id), registry.get_default_config(env_id)
     obs_dim: int = env.observation_size["state"][0]
     action_dim: int = env.action_size
+    if auto_reset:
+        env = wrapper.BraxAutoResetWrapper(env)
+
     if num_envs == 1:
         env_reset_fn, env_step_fn = jax.jit(env.reset), jax.jit(env.step)
     else:
         pass  # TODO: Implement multi-env support
+
     return env, env_cfg, obs_dim, action_dim, env_reset_fn, env_step_fn
 
 
@@ -124,25 +130,21 @@ def evaluate(env_id: str, n_episodes: int, outdir: str):
         print(f"Evaluating episode {n + 1}/{n_episodes}...")
         rng = jax.random.PRNGKey(n)
         state = env_reset_fn(rng)
-        rollout = [state]
+        trajectory = [state]
         for _ in range(env_cfg.episode_length):
             rng, subkey = jax.random.split(rng)
-            # action = jax.random.uniform(
-            #     subkey, shape=(action_dim,), minval=-1.0, maxval=1.0
-            # )
             action = policy_nn.sample_action(state.obs["state"], subkey)
-            print(action)
             state = env_step_fn(state, action)
-            rollout.append(state)
+            trajectory.append(state)
             if state.done:
                 break
 
-        total_reward: float = sum([s.reward for s in rollout])
+        total_reward: float = sum([s.reward for s in trajectory])
         print(
-            f"Episode {n + 1}, {len(rollout)} steps, total reward: {total_reward:.2f}"
+            f"Episode {n + 1}, {len(trajectory)} steps, total reward: {total_reward:.2f}"
         )
         print("Saving video...")
-        frames: list[np.ndarray] = env.render(rollout, camera="track")
+        frames: list[np.ndarray] = env.render(trajectory, camera="track")
         imageio.mimsave(f"{outdir}/eval_{n+1}.mp4", frames, fps=1 / env.dt)
 
 
