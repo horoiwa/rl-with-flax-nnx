@@ -71,6 +71,8 @@ def train_step(
     value_network,
     value_optimizer,
 ):
+    def compute_advantage(data: dict):
+        return data
 
     def policy_loss_fn(policy_network):
         loss = 0.0
@@ -97,15 +99,13 @@ def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
         env = wrapper.BraxAutoResetWrapper(env)
 
     if num_envs == 1:
-        env_reset_fn, env_step_fn = jax.jit(env.reset), jax.jit(env.step)
+        reset_fn = jax.jit(env.reset)
+        step_fn = jax.jit(env.step)
     else:
-        pass  # TODO: Implement multi-env support
+        reset_fn = jax.jit(jax.vmap(env.reset, in_axes=(0,)))
+        step_fn = jax.jit(jax.vmap(env.step, in_axes=(0, 0)))
 
-    return env, env_cfg, obs_dim, action_dim, env_reset_fn, env_step_fn
-
-
-def compute_advantage(data: dict):
-    return data
+    return env, env_cfg, obs_dim, action_dim, reset_fn, step_fn
 
 
 def train(env_id: str, num_envs: int, outdir: str):
@@ -114,10 +114,21 @@ def train(env_id: str, num_envs: int, outdir: str):
         shutil.rmtree(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    (env, env_cfg, obs_dim, action_dim, env_reset_fn, env_step_fn) = create_env(env_id)
+    rng = jax.random.PRNGKey(0)
+
+    (env, env_cfg, obs_dim, action_dim, reset_fn, step_fn) = create_env(
+        env_id, num_envs=num_envs, auto_reset=True
+    )
 
     policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
     value_nn = ValueNN(obs_dim=obs_dim, rngs=nnx.Rngs(0))
+
+    rng, keys = jax.random.split(rng)
+    states = reset_fn(jax.random.split(keys, num_envs))
+    while (i := 0) <= 100_000_000:
+        trajectory = []
+        for _ in range(5):
+            i += num_envs
 
 
 def evaluate(env_id: str, n_episodes: int, outdir: str):
@@ -152,8 +163,8 @@ def evaluate(env_id: str, n_episodes: int, outdir: str):
 
 if __name__ == "__main__":
     try:
-        wandb.init(project="ppo", mode="disabled")
-        # train(env_id="Go1JoystickFlatTerrain", num_envs=10, outdir="log")
-        evaluate(env_id="Go1JoystickFlatTerrain", outdir="log", n_episodes=5)
+        # wandb.init(project="ppo", mode="disabled")
+        train(env_id="Go1JoystickFlatTerrain", num_envs=4, outdir="log")
+        # evaluate(env_id="Go1JoystickFlatTerrain", outdir="log", n_episodes=5)
     finally:
         wandb.finish()
