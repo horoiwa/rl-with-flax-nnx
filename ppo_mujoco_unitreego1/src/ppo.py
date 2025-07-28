@@ -3,6 +3,9 @@ import shutil
 
 import wandb
 
+import imageio
+from tqdm import tqdm
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -36,13 +39,13 @@ class GaussianPolicy(nnx.Module):
         std = jnp.exp(self.log_std)
         return mu, std
 
-    def sample_action(self, obs, key: nnx.Rngs):
+    def sample_action(self, obs, key: jax.random.PRNGKey):
         mu, std = self(obs)
         action = mu + std * jax.random.normal(key, shape=(self.action_dim,))
         return action
 
 
-class Value(nnx.Module):
+class ValueNN(nnx.Module):
     def __init__(self, obs_dim, rngs: nnx.Rngs):
 
         self.dense_1 = nnx.Linear(in_features=obs_dim, out_features=128, rngs=rngs)
@@ -84,39 +87,71 @@ def train_step(
     return ploss.mean(), vloss.mean()
 
 
+def create_env(env_id: str, num_envs: int = 1):
+    env, env_cfg = registry.load(env_id), registry.get_default_config(env_id)
+    obs_dim: int = env.observation_size["state"][0]
+    action_dim: int = env.action_size
+    if num_envs == 1:
+        env_reset_fn, env_step_fn = jax.jit(env.reset), jax.jit(env.step)
+    else:
+        pass  # TODO: Implement multi-env support
+    return env, env_cfg, obs_dim, action_dim, env_reset_fn, env_step_fn
+
+
 def compute_advantage(data: dict):
     return data
 
 
-def main(env_id: str, num_envs: int, outdir: str):
-
+def train(env_id: str, num_envs: int, outdir: str):
     outdir = Path(outdir)
     if outdir.exists():
         shutil.rmtree(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    env = registry.load(env_id)
-    reset_env_fn = jax.vmap(env.reset, in_axes=(0, None))
-    step_env_fn = jax.vmap(env.step, in_axes=(0, 0, 0, None))
+    (env, env_cfg, obs_dim, action_dim, env_reset_fn, env_step_fn) = create_env(env_id)
 
-    rng = jax.random.PRNGKey(0)
-    rng, *keys = jax.random.split(rng, num_envs + 1)
-    keys = jnp.stack(keys)
+    policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
+    value_nn = ValueNN(obs_dim=obs_dim, rngs=nnx.Rngs(0))
 
-    import pdb; pdb.set_trace()  # fmt: skip
 
-    states = env.reset(key)
-    action_dim: int = int(env.action_space.n)
+def evaluate(env_id: str, n_episodes: int, outdir: str):
 
-    policy_nn = GaussianPolicy()
-    value_nn = Value()
-    # ppo_params = locomotion_params.brax_ppo_config(env_id)
+    (env, env_cfg, obs_dim, action_dim, env_reset_fn, env_step_fn) = create_env(env_id)
 
+    policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
+
+    for n in tqdm(range(n_episodes)):
+        print(f"Evaluating episode {n + 1}/{n_episodes}...")
+        rng = jax.random.PRNGKey(n)
+        state = env_reset_fn(rng)
+        rollout = [state]
+        for _ in range(env_cfg.episode_length):
+            rng, subkey = jax.random.split(rng)
+            # action = jax.random.uniform(
+            #     subkey, shape=(action_dim,), minval=-1.0, maxval=1.0
+            # )
+            action = policy_nn.sample_action(state.obs["state"], subkey)
+            print(action)
+            state = env_step_fn(state, action)
+            rollout.append(state)
+            if state.done:
+                break
+
+        total_reward: float = sum([s.reward for s in rollout])
+        print(
+            f"Episode {n + 1}, {len(rollout)} steps, total reward: {total_reward:.2f}"
+        )
+        print("Saving video...")
+        frames: list[np.ndarray] = env.render(rollout, camera="track")
+        imageio.mimsave(f"{outdir}/eval_{n+1}.mp4", frames, fps=1 / env.dt)
+
+
+# ppo_params = locomotion_params.brax_ppo_config(env_id)
 
 if __name__ == "__main__":
     try:
         wandb.init(project="ppo", mode="disabled")
-        # main(env_id="Go1Footstand", outdir="log")
-        main(env_id="Go1JoystickFlatTerrain", num_envs=12, outdir="log")
+        # train(env_id="Go1JoystickFlatTerrain", num_envs=10, outdir="log")
+        evaluate(env_id="Go1JoystickFlatTerrain", outdir="log", n_episodes=5)
     finally:
         wandb.finish()
