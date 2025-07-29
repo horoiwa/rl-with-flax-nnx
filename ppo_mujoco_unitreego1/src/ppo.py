@@ -83,7 +83,7 @@ class ValueNN(nnx.Module):
 
 # @nnx.jit
 def train_step(
-    data,
+    batch_data: dict,
     policy_network,
     policy_optimizer,
     value_network,
@@ -109,40 +109,73 @@ def train_step(
     return ploss.mean(), vloss.mean()
 
 
-def train(env_id: str, num_envs: int, outdir: str):
-    outdir = Path(outdir)
-    if outdir.exists():
-        shutil.rmtree(outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
+# @nnx.jit
+def compute_advantage(rewards, dones, value_network, gamma=0.99):
+    """Computes advantage(GAE)"""
+    pass
+
+
+def train(env_id: str, num_envs: int, log_dir: str):
+    log_dir = Path(log_dir)
+    if log_dir.exists():
+        shutil.rmtree(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     (env, env_cfg, obs_dim, action_dim, reset_fn, step_fn) = create_env(
         env_id, num_envs=num_envs, auto_reset=True
     )
+    ppo_params = locomotion_params.brax_ppo_config(env_id)
 
     policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
+    policy_optimizer = optax.adam(learning_rate=1e-3)
+
     value_nn = ValueNN(obs_dim=obs_dim, rngs=nnx.Rngs(0))
+    value_optimizer = optax.adam(learning_rate=1e-3)
 
     rng, *keys = jax.random.split(jax.random.PRNGKey(0), num_envs + 1)
     states = reset_fn(jnp.array(keys))
-    while (i := 0) <= 100_000_000:
-        # In a real PPO implementation, this is where you'd collect rollouts
-        trajcetory = []
-        for _ in range(5):
-            rng, key = jax.random.split(rng)
-            actions = policy_nn.sample_action(states.obs["state"], key)
-            states = step_fn(states, actions)
-            trajcetory.append(states)
-            i += num_envs
-            print(states.done)
-        import pdb; pdb.set_trace()  # fmt: skip
+
+    trajcetory = [states]
+    for i in range(100_000_000 // num_envs):
+        rng, key = jax.random.split(rng)
+        actions = policy_nn.sample_action(states.obs["state"], key)
+        states = step_fn(states, actions)
+        trajcetory.append(states)
+        i += num_envs
+
+        if i % 4 == 0:
+            _trajectory, trajectory = trajectory[:5], trajcetory[4:]
+            batch_data = {
+                "obs": jnp.stack([s.obs["state"] for s in _trajectory]),
+                "actions": jnp.stack([s.action for s in _trajectory]),
+                "rewards": jnp.stack([s.reward for s in _trajectory]),
+                "dones": jnp.stack([s.done for s in _trajectory]),
+            }
+            batch_data["advantages"] = compute_advantage(
+                batch_data["obs"], batch_data["rewards"], batch_data["dones"], value_nn
+            )
+
+            train_step(
+                batch_data,
+                policy_nn,
+                policy_optimizer,
+                value_nn,
+                value_optimizer,
+            )
+
+        if i % 1000 == 0:
+            score = evaluate(
+                env_id=env_id, n_episodes=5, log_dir=log_dir, record_video=False
+            )
 
 
-def evaluate(env_id: str, n_episodes: int, outdir: str):
+def evaluate(env_id: str, n_episodes: int, log_dir: str, record_video: bool = True):
 
     (env, env_cfg, obs_dim, action_dim, env_reset_fn, env_step_fn) = create_env(env_id)
 
     policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
 
+    scores = []
     for n in tqdm(range(n_episodes)):
         print(f"Evaluating episode {n + 1}/{n_episodes}...")
         rng = jax.random.PRNGKey(n)
@@ -156,16 +189,17 @@ def evaluate(env_id: str, n_episodes: int, outdir: str):
             if state.done:
                 break
 
-        total_reward: float = sum([s.reward for s in trajectory])
-        print(
-            f"Episode {n + 1}, {len(trajectory)} steps, total reward: {total_reward:.2f}"
-        )
-        print("Saving video...")
-        frames: list[np.ndarray] = env.render(trajectory, camera="track")
-        imageio.mimsave(f"{outdir}/eval_{n+1}.mp4", frames, fps=1 / env.dt)
+        score: float = sum([s.reward for s in trajectory])
+        scores.append(score)
+        print(f"Episode {n + 1}, {len(trajectory)} steps, total reward: {score:.2f}")
 
+        if record_video:
+            print("Saving video...")
+            frames: list[np.ndarray] = env.render(trajectory, camera="track")
+            imageio.mimsave(f"{log_dir}/eval_{n+1}.mp4", frames, fps=1 / env.dt)
 
-# ppo_params = locomotion_params.brax_ppo_config(env_id)
+    return np.mean(scores)
+
 
 if __name__ == "__main__":
     try:
