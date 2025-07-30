@@ -235,7 +235,7 @@ def train(env_id: str, log_dir: str):
     rng, *subkeys = jax.random.split(jax.random.PRNGKey(0), NUM_ENVS + 1)
     state = env_reset_fn(jnp.array(subkeys))
     trajectory, selected_actions = [state], []
-    for i in tqdm(range(1, 100_000_000 // NUM_ENVS)):
+    for i in tqdm(range(100_000_000 // NUM_ENVS)):
         rng, subkey = jax.random.split(rng)
         action, log_prob = policy_nn.sample_action(state.obs["state"], subkey)
         selected_actions.append((action, log_prob))
@@ -243,7 +243,7 @@ def train(env_id: str, log_dir: str):
         state = env_step_fn(state, action)
         trajectory.append(state)
 
-        if i % UNROLL_LENGTH == 0:
+        if i % UNROLL_LENGTH == 0 and i != 0:
             assert len(trajectory) == UNROLL_LENGTH + 1
             assert len(selected_actions) == UNROLL_LENGTH
 
@@ -294,7 +294,7 @@ def train(env_id: str, log_dir: str):
             trajectory = trajectory[-1:]  # Keep the last state for the next rollout
             selected_actions = []  # Reset actions for the next rollout
 
-        if i % 1000 == 0:
+        if i % 2500 == 0:
             # Save the model checkpoint
             checkpointer = ocp.StandardCheckpointer()
             ckpt_dir: Path = Path(log_dir / CKPT_DIR).resolve()
