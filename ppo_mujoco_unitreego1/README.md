@@ -1,14 +1,17 @@
 
-# Setup
+# RUN
+
+`python ppo.py train --use-wandb`
+
+`python ppo.py eval`
 
 
 # Reference
-(Ant)[https://gymnasium.farama.org/environments/mujoco/ant/]
 
 (mujoco-mjx)[https://github.com/google-deepmind/mujoco/tree/main/mjx]
 
 
-https://playground.mujoco.org/
+(mujoco-playground)[https://playground.mujoco.org/]
 
 
 

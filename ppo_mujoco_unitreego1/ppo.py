@@ -24,9 +24,10 @@ from mujoco_playground import wrapper, registry
 from mujoco_playground.config import locomotion_params
 
 # Hyperparameters
-UNROLL_LENGTH = 20
-BATCH_SIZE = 8  # 256
-NUM_UPDATE_PER_BATCH = 4
+NUM_ENVS = 1024
+BATCH_SIZE = 256
+UNROLL_LENGTH = 10
+NUM_UPDATE_PER_BATCH = 16
 DISCOUNT = 0.98
 GAE_LAMBDA = 0.95
 CLIP_EPS = 0.2
@@ -202,27 +203,38 @@ def compute_advantage_and_target(value_nn, obs, rewards, dones):
     return gae, target_values
 
 
-def train(env_id: str, num_envs: int, log_dir: str):
+def train(env_id: str, log_dir: str):
+
     log_dir = Path(log_dir)
     if log_dir.exists():
         shutil.rmtree(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
 
     (env, env_cfg, obs_dim, priv_obs_dim, action_dim, env_reset_fn, env_step_fn) = (
-        create_env(env_id, num_envs=num_envs, auto_reset=True)
+        create_env(env_id, num_envs=NUM_ENVS, auto_reset=True)
     )
     # ppo_config = locomotion_params.brax_ppo_config(env_id)
 
     policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
-    policy_optimizer = nnx.Optimizer(policy_nn, optax.adam(learning_rate=3e-4))
+    policy_optimizer = nnx.Optimizer(
+        policy_nn,
+        optax.chain(
+            optax.clip_by_global_norm(MAX_GRAD_NORM), optax.adam(learning_rate=3e-4)
+        ),
+    )
 
     value_nn = ValueNN(obs_dim=priv_obs_dim, rngs=nnx.Rngs(0))
-    value_optimizer = nnx.Optimizer(value_nn, optax.adam(learning_rate=3e-4))
+    value_optimizer = nnx.Optimizer(
+        value_nn,
+        optax.chain(
+            optax.clip_by_global_norm(MAX_GRAD_NORM), optax.adam(learning_rate=3e-4)
+        ),
+    )
 
-    rng, *subkeys = jax.random.split(jax.random.PRNGKey(0), num_envs + 1)
+    rng, *subkeys = jax.random.split(jax.random.PRNGKey(0), NUM_ENVS + 1)
     state = env_reset_fn(jnp.array(subkeys))
     trajectory, selected_actions = [state], []
-    for i in range(1, 100_000_000 // num_envs):
+    for i in tqdm(range(1, 100_000_000 // NUM_ENVS)):
         rng, subkey = jax.random.split(rng)
         action, log_prob = policy_nn.sample_action(state.obs["state"], subkey)
         selected_actions.append((action, log_prob))
@@ -241,7 +253,7 @@ def train(env_id: str, num_envs: int, log_dir: str):
                 dones=jnp.stack([s.done for s in trajectory[1:]], axis=1),
             )
 
-            B, T = num_envs, UNROLL_LENGTH
+            B, T = NUM_ENVS, UNROLL_LENGTH
             batch_data = {
                 "obs_policy": jnp.stack(
                     [s.obs["state"] for s in trajectory[:-1]], axis=1
@@ -272,6 +284,11 @@ def train(env_id: str, num_envs: int, log_dir: str):
                     policy_optimizer=policy_optimizer,
                     value_optimizer=value_optimizer,
                 )
+            else:
+                wandb.log(
+                    {"ploss": ploss, "vloss": vloss},
+                    step=i * NUM_ENVS,
+                )
 
             trajectory = trajectory[-1:]  # Keep the last state for the next rollout
             selected_actions = []  # Reset actions for the next rollout
@@ -280,6 +297,10 @@ def train(env_id: str, num_envs: int, log_dir: str):
             print(f"Step {i}: policy_loss={ploss:.4f}, value_loss={vloss:.4f}")
             test_score = evaluate(
                 env_id=env_id, n_episodes=5, log_dir=log_dir, record_video=False
+            )
+            wandb.log(
+                {"episode_reward": test_score},
+                step=i * NUM_ENVS,
             )
 
 
@@ -319,10 +340,35 @@ def evaluate(env_id: str, n_episodes: int, log_dir: str, record_video: bool = Tr
     return np.mean(scores)
 
 
-if __name__ == "__main__":
+import click
+
+
+@click.group()
+def cli():
+    pass
+
+
+@cli.command(name="train")
+@click.option("--env-id", default="Go1JoystickFlatTerrain", help="Environment ID")
+@click.option("--log-dir", default="log", help="Directory to save logs and videos")
+@click.option("--use-wandb", is_flag=True, help="Enable wandb (default: disable)")
+def run_training(env_id: str, log_dir: str, use_wandb: bool):
     try:
-        # wandb.init(project="ppo", mode="disabled")
-        # train(env_id="Go1JoystickFlatTerrain", num_envs=4, log_dir="log")
-        evaluate(env_id="Go1JoystickFlatTerrain", log_dir="log", n_episodes=5)
+        wandb.init(
+            project="ppo",
+            mode="online" if use_wandb else "disabled",
+        )
+        train(env_id=env_id, log_dir=f"{log_dir}/{env_id}")
     finally:
         wandb.finish()
+
+
+@cli.command(name="eval")
+@click.option("--env-id", default="Go1JoystickFlatTerrain", help="Environment ID")
+@click.option("--log-dir", default="log", help="Directory to save logs and videos")
+def run_evaluation(env_id: str, log_dir: str):
+    evaluate(env_id=env_id, log_dir=f"{log_dir}/{env_id}", n_episodes=5)
+
+
+if __name__ == "__main__":
+    cli()
