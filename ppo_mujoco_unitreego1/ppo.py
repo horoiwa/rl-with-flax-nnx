@@ -33,6 +33,7 @@ GAE_LAMBDA = 0.95
 CLIP_EPS = 0.2
 ENTROPY_COEF = 0.01
 MAX_GRAD_NORM = 1.0
+CKPT_DIR = "checkpoints"
 
 
 def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
@@ -296,9 +297,9 @@ def train(env_id: str, log_dir: str):
         if i % 1000 == 0:
             # Save the model checkpoint
             checkpointer = ocp.StandardCheckpointer()
-            ckpt_dir: Path = Path(log_dir / f"policy").resolve()
+            ckpt_dir: Path = Path(log_dir / CKPT_DIR).resolve()
             _, _state = nnx.split(policy_nn)
-            checkpointer.save(ckpt_dir, _state)
+            checkpointer.save(ckpt_dir, _state, force=True)
 
             # Evaluate
             test_score = evaluate(
@@ -326,10 +327,10 @@ def evaluate(
 
     # Load the trained policy
     abstract_model = nnx.eval_shape(
-        lambda: GaussianPolicy(action_dim, rngs=nnx.Rngs(0))
+        lambda: GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
     )
     checkpointer = ocp.StandardCheckpointer()
-    ckpt_dir: Path = Path(log_dir / f"policy").resolve()
+    ckpt_dir: Path = Path(log_dir / CKPT_DIR).resolve()
     _graphdef, _abstract_state = nnx.split(abstract_model)
     _state = checkpointer.restore(ckpt_dir, _abstract_state)
     policy_nn = nnx.merge(_graphdef, _state)
