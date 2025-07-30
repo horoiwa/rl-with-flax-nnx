@@ -1,6 +1,6 @@
 from pathlib import Path
 import shutil
-import functools
+import copy
 
 import wandb
 
@@ -15,7 +15,8 @@ from flax import nnx
 import optax
 import orbax.checkpoint as ocp
 
-# from brax.training.agents.ppo import train as brax_train
+from brax.training.agents.ppo import train as brax_train
+
 # from brax import envs as brax_envs
 
 
@@ -24,12 +25,12 @@ from mujoco_playground.config import locomotion_params
 
 # Hyperparameters
 UNROLL_LENGTH = 20
-BATCH_SIZE = 16  # 256
+BATCH_SIZE = 8  # 256
 NUM_UPDATE_PER_BATCH = 4
 DISCOUNT = 0.98
 GAE_LAMBDA = 0.95
 CLIP_EPS = 0.2
-ENTROPY_COST = 0.01
+ENTROPY_COEF = 0.01
 MAX_GRAD_NORM = 1.0
 
 
@@ -56,9 +57,24 @@ class GaussianPolicy(nnx.Module):
 
         self.action_dim = action_dim
 
-        self.dense_1 = nnx.Linear(in_features=obs_dim, out_features=512, rngs=rngs)
-        self.dense_2 = nnx.Linear(in_features=512, out_features=256, rngs=rngs)
-        self.dense_3 = nnx.Linear(in_features=256, out_features=128, rngs=rngs)
+        self.dense_1 = nnx.Linear(
+            in_features=obs_dim,
+            out_features=512,
+            kernel_init=nnx.initializers.orthogonal(),
+            rngs=rngs,
+        )
+        self.dense_2 = nnx.Linear(
+            in_features=512,
+            out_features=256,
+            kernel_init=nnx.initializers.orthogonal(),
+            rngs=rngs,
+        )
+        self.dense_3 = nnx.Linear(
+            in_features=256,
+            out_features=128,
+            kernel_init=nnx.initializers.orthogonal(),
+            rngs=rngs,
+        )
 
         self.mu = nnx.Linear(in_features=128, out_features=action_dim, rngs=rngs)
         self.log_std = nnx.Param(jnp.zeros(action_dim))
@@ -68,13 +84,13 @@ class GaussianPolicy(nnx.Module):
         x = nnx.elu(self.dense_2(x))
         x = nnx.elu(self.dense_3(x))
         mu = nnx.tanh(self.mu(x))
-        std = jnp.exp(self.log_std)
+        std = jnp.repeat(jnp.exp(self.log_std[None, :]), mu.shape[0], axis=0)
         return mu, std
 
-    # @nnx.jit
+    @nnx.jit
     def sample_action(self, obs, key: jax.random.PRNGKey):
         mu, std = self(obs)
-        action = mu + std * jax.random.normal(key, shape=(self.action_dim,))
+        action = mu + std * jax.random.normal(key, shape=mu.shape)
         log_prob = jax.scipy.stats.norm.logpdf(action, loc=mu, scale=std).sum(axis=-1)
         return action, log_prob
 
@@ -82,12 +98,31 @@ class GaussianPolicy(nnx.Module):
 class ValueNN(nnx.Module):
     def __init__(self, obs_dim, rngs: nnx.Rngs):
 
-        self.dense_1 = nnx.Linear(in_features=obs_dim, out_features=512, rngs=rngs)
-        self.dense_2 = nnx.Linear(in_features=512, out_features=256, rngs=rngs)
-        self.dense_3 = nnx.Linear(in_features=256, out_features=128, rngs=rngs)
-        self.out = nnx.Linear(in_features=128, out_features=1, rngs=rngs)
+        self.dense_1 = nnx.Linear(
+            in_features=obs_dim,
+            out_features=512,
+            kernel_init=nnx.initializers.orthogonal(),
+            rngs=rngs,
+        )
+        self.dense_2 = nnx.Linear(
+            in_features=512,
+            out_features=256,
+            kernel_init=nnx.initializers.orthogonal(),
+            rngs=rngs,
+        )
+        self.dense_3 = nnx.Linear(
+            in_features=256,
+            out_features=128,
+            kernel_init=nnx.initializers.orthogonal(),
+            rngs=rngs,
+        )
+        self.out = nnx.Linear(
+            in_features=128,
+            out_features=1,
+            kernel_init=nnx.initializers.orthogonal(),
+            rngs=rngs,
+        )
 
-    @nnx.jit
     def __call__(self, x):
         x = nnx.elu(self.dense_1(x))
         x = nnx.elu(self.dense_2(x))
@@ -98,96 +133,49 @@ class ValueNN(nnx.Module):
 
 def train_step(
     batch_data: dict,
-    key: jax.random.PRNGKey,
     policy_nn: GaussianPolicy,
     value_nn: ValueNN,
     policy_optimizer: optax.GradientTransformation,
     value_optimizer: optax.GradientTransformation,
 ):
-    """Performs one epoch of PPO updates."""
-    B = batch_data["obs_policy"].shape[0] * batch_data["obs_policy"].shape[1]
-
-    flat_batch = {
-        "obs_policy": batch_data["obs_policy"].reshape(B, -1),
-        "obs_value": batch_data["obs_value"][:, :-1].reshape(B, -1),
-        "actions": batch_data["actions"].reshape(B, -1),
-        "log_probs_old": batch_data["log_probs"].reshape(B),
-        "advantages": batch_data["advantages"].reshape(B),
-        "target_values": batch_data["target_values"].reshape(B),
-    }
-
-    # Normalize advantages
-    advantages = (flat_batch["advantages"] - jnp.mean(flat_batch["advantages"])) / (
-        jnp.std(flat_batch["advantages"]) + 1e-8
-    )
-    flat_batch["normalized_advantages"] = advantages
-
-    # Shuffle data
-    key, subkey = jax.random.split(key)
-    permutation = jax.random.permutation(subkey, B)
-    shuffled_batch = jax.tree_util.tree_map(lambda x: x[permutation], flat_batch)
-
-    # Split into minibatches
-    minibatch_size = B // BATCH_SIZE
-    minibatches = jax.tree_util.tree_map(
-        lambda x: x.reshape((BATCH_SIZE, minibatch_size) + x.shape[1:]),
-        shuffled_batch,
+    advantages = batch_data["advantages"]
+    normalized_advantages = (advantages - jnp.mean(advantages)) / (
+        jnp.std(advantages) + 1e-8
     )
 
-    def update_minibatch(carry, minibatch_data):
-        policy_opt_state, value_opt_state = carry
+    def policy_loss_fn(policy_nn):
+        mu, std = policy_nn(batch_data["obs_policy"])
+        new_log_probs = jax.scipy.stats.norm.logpdf(
+            batch_data["actions"], loc=mu, scale=std
+        ).sum(axis=-1, keepdims=True)
 
-        def policy_loss_fn(params):
-            policy_nn.update(params)
-            mu, std = policy_nn(minibatch_data["obs_policy"])
-            new_log_probs = jax.scipy.stats.norm.logpdf(
-                minibatch_data["actions"], loc=mu, scale=std
-            ).sum(axis=-1)
+        ratio = jnp.exp(new_log_probs - batch_data["old_log_probs"])
+        surr1 = ratio * normalized_advantages
+        surr2 = jnp.clip(ratio, 1.0 - CLIP_EPS, 1.0 + CLIP_EPS) * normalized_advantages
+        policy_loss = -1 * jnp.minimum(surr1, surr2)
 
-            ratio = jnp.exp(new_log_probs - minibatch_data["log_probs_old"])
-            surr1 = ratio * minibatch_data["advantages"]
-            surr2 = (
-                jnp.clip(ratio, 1 - CLIP_EPS, 1 + CLIP_EPS)
-                * minibatch_data["advantages"]
-            )
-            policy_loss = -jnp.mean(jnp.minimum(surr1, surr2))
-
-            entropy = jnp.mean(
-                jax.scipy.stats.norm.entropy(loc=mu, scale=std).sum(axis=-1)
-            )
-            entropy_loss = ENTROPY_COST * -entropy
-
-            return policy_loss + entropy_loss
-
-        def value_loss_fn(params):
-            value_nn.update(params)
-            predicted_values = value_nn(minibatch_data["obs_value"]).squeeze()
-            return jnp.mean((predicted_values - minibatch_data["target_values"]) ** 2)
-
-        # Update policy
-        p_grad = nnx.grad(policy_loss_fn, wrt=nnx.Param)(policy_nn.get(nnx.Param))
-        p_updates, new_policy_opt_state = policy_optimizer.update(
-            p_grad, policy_opt_state, policy_nn.get(nnx.Param)
+        entropy = jnp.sum(
+            0.5 * (1 + jnp.log(2 * jnp.pi * std**2)), axis=-1, keepdims=True
         )
-        policy_nn.update(p_updates)
+        entropy_loss = -1 * ENTROPY_COEF * entropy
 
-        # Update value
-        v_grad = nnx.grad(value_loss_fn, wrt=nnx.Param)(value_nn.get(nnx.Param))
-        v_updates, new_value_opt_state = value_optimizer.update(
-            v_grad, value_opt_state, value_nn.get(nnx.Param)
-        )
-        value_nn.update(v_updates)
+        loss = jnp.mean(policy_loss + entropy_loss)
 
-        p_loss = policy_loss_fn(policy_nn.get(nnx.Param))
-        v_loss = value_loss_fn(value_nn.get(nnx.Param))
+        return loss
 
-        return (new_policy_opt_state, new_value_opt_state), (p_loss, v_loss)
+    def value_loss_fn(value_nn):
+        values = value_nn(batch_data["obs_value"])
+        value_loss = (values - batch_data["target_values"]) ** 2
+        loss = jnp.mean(value_loss)
+        return loss
 
-    (policy_opt_state, value_opt_state), (p_losses, v_losses) = jax.lax.scan(
-        update_minibatch, (policy_opt_state, value_opt_state), minibatches
-    )
+    p_loss, p_grad = nnx.value_and_grad(policy_loss_fn)(policy_nn)
+    policy_optimizer.update(p_grad)
 
-    return jnp.mean(p_losses), jnp.mean(v_losses), policy_opt_state, value_opt_state
+    v_loss, v_grad = nnx.value_and_grad(value_loss_fn)(value_nn)
+    value_optimizer.update(v_grad)
+
+    return p_loss, v_loss
 
 
 @nnx.jit
@@ -209,6 +197,7 @@ def compute_advantage_and_target(value_nn, obs, rewards, dones):
     )
     gae = gae_T.T
     target_values = gae + values_t
+
     return gae, target_values
 
 
@@ -224,19 +213,17 @@ def train(env_id: str, num_envs: int, log_dir: str):
     # ppo_config = locomotion_params.brax_ppo_config(env_id)
 
     policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
-    policy_optimizer = optax.adam(learning_rate=3e-4)
+    policy_optimizer = nnx.Optimizer(policy_nn, optax.adam(learning_rate=3e-4))
 
     value_nn = ValueNN(obs_dim=priv_obs_dim, rngs=nnx.Rngs(0))
-    value_optimizer = optax.adam(learning_rate=3e-4)
+    value_optimizer = nnx.Optimizer(value_nn, optax.adam(learning_rate=3e-4))
 
     rng, *subkeys = jax.random.split(jax.random.PRNGKey(0), num_envs + 1)
     state = env_reset_fn(jnp.array(subkeys))
     trajectory, selected_actions = [state], []
     for i in range(1, 100_000_000 // num_envs):
-        rng, *subkeys = jax.random.split(rng, num_envs + 1)
-        action, log_prob = jax.vmap(policy_nn.sample_action)(
-            state.obs["state"], jnp.array(subkeys)
-        )
+        rng, subkey = jax.random.split(rng)
+        action, log_prob = policy_nn.sample_action(state.obs["state"], subkey)
         selected_actions.append((action, log_prob))
 
         state = env_step_fn(state, action)
@@ -244,41 +231,41 @@ def train(env_id: str, num_envs: int, log_dir: str):
 
         if i % UNROLL_LENGTH == 0:
             assert len(trajectory) == UNROLL_LENGTH + 1
-            # ここでいきなりbatch_dictをつくらず、さいごにフラットなバッチをつくる
-            batch_data = {
-                "obs_policy": jnp.stack(
-                    [s.obs["state"] for s in trajectory[:-1]], axis=1
-                ),
-                "obs_value": jnp.stack(
-                    [s.obs["privileged_state"] for s in trajectory], axis=1
-                ),
-                "actions": jnp.stack([a[0] for a in selected_actions], axis=1),
-                "log_probs": jnp.stack([a[1] for a in selected_actions], axis=1),
-                "rewards": jnp.stack([s.reward for s in trajectory[1:]], axis=1),
-                "dones": jnp.stack([s.done for s in trajectory[1:]], axis=1),
-            }
+            assert len(selected_actions) == UNROLL_LENGTH
 
             advantages, target_values = compute_advantage_and_target(
                 value_nn,
-                obs=batch_data["obs_value"],
-                rewards=batch_data["rewards"],
-                dones=batch_data["dones"],
+                obs=jnp.stack([s.obs["privileged_state"] for s in trajectory], axis=1),
+                rewards=jnp.stack([s.reward for s in trajectory[1:]], axis=1),
+                dones=jnp.stack([s.done for s in trajectory[1:]], axis=1),
             )
 
+            B, T = num_envs, UNROLL_LENGTH
             batch_data = {
-                "obs": None,
-                "actions": None,
-                "log_probs": None,
-                "advantages": advantages,
-                "target_values": target_values,
+                "obs_policy": jnp.stack(
+                    [s.obs["state"] for s in trajectory[:-1]], axis=1
+                ).reshape(B * T, -1),
+                "obs_value": jnp.stack(
+                    [s.obs["privileged_state"] for s in trajectory[:-1]], axis=1
+                ).reshape(B * T, -1),
+                "actions": jnp.stack([a[0] for a in selected_actions], axis=1).reshape(
+                    B * T, -1
+                ),
+                "old_log_probs": jnp.stack(
+                    [a[1] for a in selected_actions], axis=1
+                ).reshape(B * T, 1),
+                "advantages": advantages.reshape(B * T, 1),
+                "target_values": target_values.reshape(B * T, 1),
             }
 
             # Update networks
             for _ in range(NUM_UPDATE_PER_BATCH):
                 rng, subkey = jax.random.split(rng)
+                indices = jax.random.permutation(subkey, B * T)[:BATCH_SIZE]
+                _batch_data = jax.tree_util.tree_map(lambda x: x[indices], batch_data)
+
                 ploss, vloss = train_step(
-                    batch_data=batch_data,
-                    rng=subkey,
+                    batch_data=_batch_data,
                     policy_nn=policy_nn,
                     value_nn=value_nn,
                     policy_optimizer=policy_optimizer,
