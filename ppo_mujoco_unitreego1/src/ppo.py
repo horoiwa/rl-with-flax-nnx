@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 import jax
 import jax.numpy as jnp
+import jax.scipy.stats
 import numpy as np
 from flax import nnx
 import optax
@@ -21,9 +22,15 @@ import orbax.checkpoint as ocp
 from mujoco_playground import wrapper, registry
 from mujoco_playground.config import locomotion_params
 
-UNROLL_LENGTH = 10
-GAMMA = 0.99
+# Hyperparameters
+UNROLL_LENGTH = 20
+BATCH_SIZE = 16  # 256
+NUM_UPDATE_PER_BATCH = 4
+DISCOUNT = 0.98
 GAE_LAMBDA = 0.95
+CLIP_EPS = 0.2
+ENTROPY_COST = 0.01
+MAX_GRAD_NORM = 1.0
 
 
 def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
@@ -68,7 +75,8 @@ class GaussianPolicy(nnx.Module):
     def sample_action(self, obs, key: jax.random.PRNGKey):
         mu, std = self(obs)
         action = mu + std * jax.random.normal(key, shape=(self.action_dim,))
-        return action
+        log_prob = jax.scipy.stats.norm.logpdf(action, loc=mu, scale=std).sum(axis=-1)
+        return action, log_prob
 
 
 class ValueNN(nnx.Module):
@@ -91,41 +99,43 @@ class ValueNN(nnx.Module):
 # @nnx.jit
 def train_step(
     batch_data: dict,
-    policy_network,
-    policy_optimizer,
-    value_network,
-    value_optimizer,
+    policy_nn: GaussianPolicy,
+    policy_optimizer: optax.GradientTransformation,
+    value_nn: ValueNN,
+    value_optimizer: optax.GradientTransformation,
 ):
-    def compute_advantage(data: dict):
-        return data
 
-    def policy_loss_fn(policy_network):
-        loss = 0.0
-        return loss
+    def policy_loss_fn(params):
+        pass
 
-    def value_loss_fn(policy_network):
-        loss = 0.0
-        return loss
+    def value_loss_fn(params):
+        pass
 
-    ploss, pgrads = nnx.value_and_grad(policy_loss_fn)(policy_network)
-    policy_optimizer.update(pgrads)
-
-    vloss, vgrads = nnx.value_and_grad(value_loss_fn)(value_network)
-    value_optimizer.update(vgrads)
-
-    return ploss.mean(), vloss.mean()
+    ploss = None
+    vloss = None
+    return (ploss, vloss)
 
 
+@nnx.jit
 def compute_advantage_and_target(value_nn, obs, rewards, dones):
-    """Computes advantage(GAE)"""
+    """Computes advantage(GAE) and value targets."""
     B, T, _ = obs.shape
     values = value_nn(obs.reshape(B * T, -1)).reshape(B, T)
-    values_t = values[:, :-1]
-    values_t_plus_1 = values[:, 1:]
+    values_t, values_t_plus_1 = values[:, :-1], values[:, 1:]
+    deltas = rewards + DISCOUNT * (1 - dones) * values_t_plus_1 - values_t
 
-    deltas = (rewards + GAMMA * (1 - dones) * values_t_plus_1) - values_t
+    def gae_scan_fn(advantage_plus_1, data_t):
+        delta_t, done_t = data_t
+        advantage_t = delta_t + DISCOUNT * GAE_LAMBDA * (1 - done_t) * advantage_plus_1
+        return advantage_t, advantage_t
 
-    return
+    initial_carry = jnp.zeros(B)
+    _, gae_T = jax.lax.scan(
+        gae_scan_fn, initial_carry, (deltas.T, dones.T), reverse=True
+    )
+    gae = gae_T.T
+    target_values = gae + values_t
+    return gae, target_values
 
 
 def train(env_id: str, num_envs: int, log_dir: str):
@@ -137,51 +147,54 @@ def train(env_id: str, num_envs: int, log_dir: str):
     (env, env_cfg, obs_dim, priv_obs_dim, action_dim, env_reset_fn, env_step_fn) = (
         create_env(env_id, num_envs=num_envs, auto_reset=True)
     )
-    ppo_params = locomotion_params.brax_ppo_config(env_id)
+    # ppo_config = locomotion_params.brax_ppo_config(env_id)
 
     policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
-    policy_optimizer = optax.adam(learning_rate=1e-3)
+    policy_optimizer = optax.adam(learning_rate=3e-4)
 
     value_nn = ValueNN(obs_dim=priv_obs_dim, rngs=nnx.Rngs(0))
-    value_optimizer = optax.adam(learning_rate=1e-3)
+    value_optimizer = optax.adam(learning_rate=3e-4)
 
+    # Rollout
     rng, *keys = jax.random.split(jax.random.PRNGKey(0), num_envs + 1)
     state = env_reset_fn(jnp.array(keys))
-
     trajectory, actions = [state], []
     for i in range(1, 100_000_000 // num_envs):
-        rng, key = jax.random.split(rng)
-        action = policy_nn.sample_action(state.obs["state"], key)
-        state = env_step_fn(state, action)
+        rng, *keys = jax.random.split(rng, num_envs + 1)
+        action, log_prob = jax.vmap(policy_nn.sample_action)(
+            state.obs["state"], jnp.array(keys)
+        )
+        actions.append((action, log_prob))
 
-        actions.append(action)
+        state = env_step_fn(state, action)
         trajectory.append(state)
 
         if i % UNROLL_LENGTH == 0:
             _traj, trajectory = (
                 trajectory[: UNROLL_LENGTH + 1],
-                trajectory[UNROLL_LENGTH:],
+                [trajectory[-1]],
             )
             batch_data = {
                 "obs_policy": jnp.stack([s.obs["state"] for s in _traj[:-1]], axis=1),
                 "obs_value": jnp.stack(
                     [s.obs["privileged_state"] for s in _traj], axis=1
                 ),
-                "actions": jnp.stack(actions, axis=1),
+                "actions": jnp.stack([a[0] for a in actions], axis=1),
+                "log_probs": jnp.stack([a[1] for a in actions], axis=1),
                 "rewards": jnp.stack([s.reward for s in _traj[1:]], axis=1),
                 "dones": jnp.stack([s.done for s in _traj[1:]], axis=1),
             }
 
-            advantages, targets = compute_advantage_and_target(
+            advantages, target_values = compute_advantage_and_target(
                 value_nn,
                 obs=batch_data["obs_value"],
                 rewards=batch_data["rewards"],
                 dones=batch_data["dones"],
             )
             batch_data["advantages"] = advantages
-            batch_data["value_targets"] = targets
+            batch_data["target_values"] = target_values
 
-            train_step(
+            (ploss, vloss) = train_step(
                 batch_data,
                 policy_nn,
                 policy_optimizer,
@@ -190,6 +203,7 @@ def train(env_id: str, num_envs: int, log_dir: str):
             )
 
         if i % 1000 == 0:
+            print(f"Step {i}: policy_loss={ploss:.4f}, value_loss={vloss:.4f}")
             test_score = evaluate(
                 env_id=env_id, n_episodes=5, log_dir=log_dir, record_video=False
             )
@@ -197,7 +211,9 @@ def train(env_id: str, num_envs: int, log_dir: str):
 
 def evaluate(env_id: str, n_episodes: int, log_dir: str, record_video: bool = True):
 
-    (env, env_cfg, obs_dim, action_dim, env_reset_fn, env_step_fn) = create_env(env_id)
+    (env, env_cfg, obs_dim, _, action_dim, env_reset_fn, env_step_fn) = create_env(
+        env_id
+    )
 
     policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
 
@@ -209,7 +225,7 @@ def evaluate(env_id: str, n_episodes: int, log_dir: str, record_video: bool = Tr
         trajectory = [state]
         for _ in range(env_cfg.episode_length):
             rng, subkey = jax.random.split(rng)
-            action = policy_nn.sample_action(state.obs["state"], subkey)
+            action, _ = policy_nn.sample_action(state.obs["state"], subkey)
             state = env_step_fn(state, action)
             trajectory.append(state)
             if state.done:
