@@ -294,9 +294,18 @@ def train(env_id: str, log_dir: str):
             selected_actions = []  # Reset actions for the next rollout
 
         if i % 1000 == 0:
-            print(f"Step {i}: policy_loss={ploss:.4f}, value_loss={vloss:.4f}")
+            # Save the model checkpoint
+            checkpointer = ocp.StandardCheckpointer()
+            ckpt_dir: Path = Path(log_dir / f"policy").resolve()
+            _, _state = nnx.split(policy_nn)
+            checkpointer.save(ckpt_dir, _state)
+
+            # Evaluate
             test_score = evaluate(
-                env_id=env_id, n_episodes=5, log_dir=log_dir, record_video=False
+                env_id=env_id,
+                n_episodes=3,
+                log_dir=log_dir,
+                record_video=True,
             )
             wandb.log(
                 {"episode_reward": test_score},
@@ -304,13 +313,26 @@ def train(env_id: str, log_dir: str):
             )
 
 
-def evaluate(env_id: str, n_episodes: int, log_dir: str, record_video: bool = True):
+def evaluate(
+    env_id: str,
+    n_episodes: int,
+    log_dir: str,
+    record_video: bool = True,
+):
 
     (env, env_cfg, obs_dim, _, action_dim, env_reset_fn, env_step_fn) = create_env(
         env_id
     )
 
-    policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
+    # Load the trained policy
+    abstract_model = nnx.eval_shape(
+        lambda: GaussianPolicy(action_dim, rngs=nnx.Rngs(0))
+    )
+    checkpointer = ocp.StandardCheckpointer()
+    ckpt_dir: Path = Path(log_dir / f"policy").resolve()
+    _graphdef, _abstract_state = nnx.split(abstract_model)
+    _state = checkpointer.restore(ckpt_dir, _abstract_state)
+    policy_nn = nnx.merge(_graphdef, _state)
 
     scores = []
     for n in tqdm(range(n_episodes)):
@@ -367,7 +389,9 @@ def run_training(env_id: str, log_dir: str, use_wandb: bool):
 @click.option("--env-id", default="Go1JoystickFlatTerrain", help="Environment ID")
 @click.option("--log-dir", default="log", help="Directory to save logs and videos")
 def run_evaluation(env_id: str, log_dir: str):
-    evaluate(env_id=env_id, log_dir=f"{log_dir}/{env_id}", n_episodes=5)
+    evaluate(
+        env_id=env_id, log_dir=f"{log_dir}/{env_id}", n_episodes=5, record_video=True
+    )
 
 
 if __name__ == "__main__":
