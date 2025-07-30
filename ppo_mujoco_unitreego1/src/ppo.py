@@ -96,22 +96,98 @@ class ValueNN(nnx.Module):
         return out
 
 
-# @nnx.jit
 def train_step(
     batch_data: dict,
+    key: jax.random.PRNGKey,
     policy_nn: GaussianPolicy,
-    policy_optimizer: optax.GradientTransformation,
     value_nn: ValueNN,
+    policy_optimizer: optax.GradientTransformation,
     value_optimizer: optax.GradientTransformation,
 ):
+    """Performs one epoch of PPO updates."""
+    B = batch_data["obs_policy"].shape[0] * batch_data["obs_policy"].shape[1]
 
-    def policy_loss_fn(params):
-        pass
+    flat_batch = {
+        "obs_policy": batch_data["obs_policy"].reshape(B, -1),
+        "obs_value": batch_data["obs_value"][:, :-1].reshape(B, -1),
+        "actions": batch_data["actions"].reshape(B, -1),
+        "log_probs_old": batch_data["log_probs"].reshape(B),
+        "advantages": batch_data["advantages"].reshape(B),
+        "target_values": batch_data["target_values"].reshape(B),
+    }
 
-    def value_loss_fn(params):
-        pass
+    # Normalize advantages
+    advantages = (flat_batch["advantages"] - jnp.mean(flat_batch["advantages"])) / (
+        jnp.std(flat_batch["advantages"]) + 1e-8
+    )
+    flat_batch["normalized_advantages"] = advantages
 
-    return
+    # Shuffle data
+    key, subkey = jax.random.split(key)
+    permutation = jax.random.permutation(subkey, B)
+    shuffled_batch = jax.tree_util.tree_map(lambda x: x[permutation], flat_batch)
+
+    # Split into minibatches
+    minibatch_size = B // BATCH_SIZE
+    minibatches = jax.tree_util.tree_map(
+        lambda x: x.reshape((BATCH_SIZE, minibatch_size) + x.shape[1:]),
+        shuffled_batch,
+    )
+
+    def update_minibatch(carry, minibatch_data):
+        policy_opt_state, value_opt_state = carry
+
+        def policy_loss_fn(params):
+            policy_nn.update(params)
+            mu, std = policy_nn(minibatch_data["obs_policy"])
+            new_log_probs = jax.scipy.stats.norm.logpdf(
+                minibatch_data["actions"], loc=mu, scale=std
+            ).sum(axis=-1)
+
+            ratio = jnp.exp(new_log_probs - minibatch_data["log_probs_old"])
+            surr1 = ratio * minibatch_data["advantages"]
+            surr2 = (
+                jnp.clip(ratio, 1 - CLIP_EPS, 1 + CLIP_EPS)
+                * minibatch_data["advantages"]
+            )
+            policy_loss = -jnp.mean(jnp.minimum(surr1, surr2))
+
+            entropy = jnp.mean(
+                jax.scipy.stats.norm.entropy(loc=mu, scale=std).sum(axis=-1)
+            )
+            entropy_loss = ENTROPY_COST * -entropy
+
+            return policy_loss + entropy_loss
+
+        def value_loss_fn(params):
+            value_nn.update(params)
+            predicted_values = value_nn(minibatch_data["obs_value"]).squeeze()
+            return jnp.mean((predicted_values - minibatch_data["target_values"]) ** 2)
+
+        # Update policy
+        p_grad = nnx.grad(policy_loss_fn, wrt=nnx.Param)(policy_nn.get(nnx.Param))
+        p_updates, new_policy_opt_state = policy_optimizer.update(
+            p_grad, policy_opt_state, policy_nn.get(nnx.Param)
+        )
+        policy_nn.update(p_updates)
+
+        # Update value
+        v_grad = nnx.grad(value_loss_fn, wrt=nnx.Param)(value_nn.get(nnx.Param))
+        v_updates, new_value_opt_state = value_optimizer.update(
+            v_grad, value_opt_state, value_nn.get(nnx.Param)
+        )
+        value_nn.update(v_updates)
+
+        p_loss = policy_loss_fn(policy_nn.get(nnx.Param))
+        v_loss = value_loss_fn(value_nn.get(nnx.Param))
+
+        return (new_policy_opt_state, new_value_opt_state), (p_loss, v_loss)
+
+    (policy_opt_state, value_opt_state), (p_losses, v_losses) = jax.lax.scan(
+        update_minibatch, (policy_opt_state, value_opt_state), minibatches
+    )
+
+    return jnp.mean(p_losses), jnp.mean(v_losses), policy_opt_state, value_opt_state
 
 
 @nnx.jit
@@ -153,34 +229,33 @@ def train(env_id: str, num_envs: int, log_dir: str):
     value_nn = ValueNN(obs_dim=priv_obs_dim, rngs=nnx.Rngs(0))
     value_optimizer = optax.adam(learning_rate=3e-4)
 
-    # Rollout
-    rng, *keys = jax.random.split(jax.random.PRNGKey(0), num_envs + 1)
-    state = env_reset_fn(jnp.array(keys))
-    trajectory, actions = [state], []
+    rng, *subkeys = jax.random.split(jax.random.PRNGKey(0), num_envs + 1)
+    state = env_reset_fn(jnp.array(subkeys))
+    trajectory, selected_actions = [state], []
     for i in range(1, 100_000_000 // num_envs):
-        rng, *keys = jax.random.split(rng, num_envs + 1)
+        rng, *subkeys = jax.random.split(rng, num_envs + 1)
         action, log_prob = jax.vmap(policy_nn.sample_action)(
-            state.obs["state"], jnp.array(keys)
+            state.obs["state"], jnp.array(subkeys)
         )
-        actions.append((action, log_prob))
+        selected_actions.append((action, log_prob))
 
         state = env_step_fn(state, action)
         trajectory.append(state)
 
         if i % UNROLL_LENGTH == 0:
-            _traj, trajectory = (
-                trajectory[: UNROLL_LENGTH + 1],
-                [trajectory[-1]],
-            )
+            assert len(trajectory) == UNROLL_LENGTH + 1
+            # ここでいきなりbatch_dictをつくらず、さいごにフラットなバッチをつくる
             batch_data = {
-                "obs_policy": jnp.stack([s.obs["state"] for s in _traj[:-1]], axis=1),
-                "obs_value": jnp.stack(
-                    [s.obs["privileged_state"] for s in _traj], axis=1
+                "obs_policy": jnp.stack(
+                    [s.obs["state"] for s in trajectory[:-1]], axis=1
                 ),
-                "actions": jnp.stack([a[0] for a in actions], axis=1),
-                "log_probs": jnp.stack([a[1] for a in actions], axis=1),
-                "rewards": jnp.stack([s.reward for s in _traj[1:]], axis=1),
-                "dones": jnp.stack([s.done for s in _traj[1:]], axis=1),
+                "obs_value": jnp.stack(
+                    [s.obs["privileged_state"] for s in trajectory], axis=1
+                ),
+                "actions": jnp.stack([a[0] for a in selected_actions], axis=1),
+                "log_probs": jnp.stack([a[1] for a in selected_actions], axis=1),
+                "rewards": jnp.stack([s.reward for s in trajectory[1:]], axis=1),
+                "dones": jnp.stack([s.done for s in trajectory[1:]], axis=1),
             }
 
             advantages, target_values = compute_advantage_and_target(
@@ -189,17 +264,29 @@ def train(env_id: str, num_envs: int, log_dir: str):
                 rewards=batch_data["rewards"],
                 dones=batch_data["dones"],
             )
-            batch_data["advantages"] = advantages
-            batch_data["target_values"] = target_values
-            import pdb; pdb.set_trace()  # fmt: skip
 
-            ploss, vloss = train_step(
-                batch_data,
-                policy_nn,
-                policy_optimizer,
-                value_nn,
-                value_optimizer,
-            )
+            batch_data = {
+                "obs": None,
+                "actions": None,
+                "log_probs": None,
+                "advantages": advantages,
+                "target_values": target_values,
+            }
+
+            # Update networks
+            for _ in range(NUM_UPDATE_PER_BATCH):
+                rng, subkey = jax.random.split(rng)
+                ploss, vloss = train_step(
+                    batch_data=batch_data,
+                    rng=subkey,
+                    policy_nn=policy_nn,
+                    value_nn=value_nn,
+                    policy_optimizer=policy_optimizer,
+                    value_optimizer=value_optimizer,
+                )
+
+            trajectory = [trajectory[-1]]  # Keep the last state for the next rollout
+            selected_actions = []  # Reset actions for the next rollout
 
         if i % 1000 == 0:
             print(f"Step {i}: policy_loss={ploss:.4f}, value_loss={vloss:.4f}")
