@@ -284,8 +284,9 @@ def train(env_id: str, num_envs: int, log_dir: str):
                     policy_optimizer=policy_optimizer,
                     value_optimizer=value_optimizer,
                 )
+                import pdb; pdb.set_trace()  # fmt: skip
 
-            trajectory = [trajectory[-1]]  # Keep the last state for the next rollout
+            trajectory = trajectory[-1:]  # Keep the last state for the next rollout
             selected_actions = []  # Reset actions for the next rollout
 
         if i % 1000 == 0:
