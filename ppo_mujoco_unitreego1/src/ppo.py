@@ -89,6 +89,7 @@ class GaussianPolicy(nnx.Module):
 
     @nnx.jit
     def sample_action(self, obs, key: jax.random.PRNGKey):
+        assert obs.ndim == 2, "Input must be (batch_size, obs_dim)"
         mu, std = self(obs)
         action = mu + std * jax.random.normal(key, shape=mu.shape)
         log_prob = jax.scipy.stats.norm.logpdf(action, loc=mu, scale=std).sum(axis=-1)
@@ -271,7 +272,6 @@ def train(env_id: str, num_envs: int, log_dir: str):
                     policy_optimizer=policy_optimizer,
                     value_optimizer=value_optimizer,
                 )
-                import pdb; pdb.set_trace()  # fmt: skip
 
             trajectory = trajectory[-1:]  # Keep the last state for the next rollout
             selected_actions = []  # Reset actions for the next rollout
@@ -299,8 +299,10 @@ def evaluate(env_id: str, n_episodes: int, log_dir: str, record_video: bool = Tr
         trajectory = [state]
         for _ in range(env_cfg.episode_length):
             rng, subkey = jax.random.split(rng)
-            action, _ = policy_nn.sample_action(state.obs["state"], subkey)
-            state = env_step_fn(state, action)
+            action, _ = policy_nn.sample_action(
+                state.obs["state"].reshape(1, -1), subkey
+            )
+            state = env_step_fn(state, action[0])
             trajectory.append(state)
             if state.done:
                 break
@@ -320,7 +322,7 @@ def evaluate(env_id: str, n_episodes: int, log_dir: str, record_video: bool = Tr
 if __name__ == "__main__":
     try:
         # wandb.init(project="ppo", mode="disabled")
-        train(env_id="Go1JoystickFlatTerrain", num_envs=4, log_dir="log")
-        # evaluate(env_id="Go1JoystickFlatTerrain", log_dir="log", n_episodes=5)
+        # train(env_id="Go1JoystickFlatTerrain", num_envs=4, log_dir="log")
+        evaluate(env_id="Go1JoystickFlatTerrain", log_dir="log", n_episodes=5)
     finally:
         wandb.finish()
