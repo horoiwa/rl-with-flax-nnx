@@ -111,9 +111,7 @@ def train_step(
     def value_loss_fn(params):
         pass
 
-    ploss = None
-    vloss = None
-    return (ploss, vloss)
+    return
 
 
 @nnx.jit
@@ -193,8 +191,9 @@ def train(env_id: str, num_envs: int, log_dir: str):
             )
             batch_data["advantages"] = advantages
             batch_data["target_values"] = target_values
+            import pdb; pdb.set_trace()  # fmt: skip
 
-            (ploss, vloss) = train_step(
+            ploss, vloss = train_step(
                 batch_data,
                 policy_nn,
                 policy_optimizer,
