@@ -79,14 +79,20 @@ class GaussianPolicy(nnx.Module):
         )
 
         self.mu = nnx.Linear(in_features=128, out_features=action_dim, rngs=rngs)
-        self.log_std = nnx.Param(jnp.zeros(action_dim))
+
+        # NOTE DEBUG
+        # self.log_std = nnx.Param(jnp.zeros(action_dim))
 
     def __call__(self, x):
         x = nnx.elu(self.dense_1(x))
         x = nnx.elu(self.dense_2(x))
         x = nnx.elu(self.dense_3(x))
         mu = nnx.tanh(self.mu(x))
-        std = jnp.repeat(jnp.exp(self.log_std[None, :]), mu.shape[0], axis=0)
+
+        # NOTE DEBUG
+        # std = jnp.repeat(jnp.exp(self.log_std[None, :]), mu.shape[0], axis=0)
+        std = jnp.repeat(jnp.zeros(self.action_dim)[None, :] + 0.1, mu.shape[0], axis=0)
+
         return mu, std
 
     @nnx.jit
@@ -235,7 +241,7 @@ def train(env_id: str, log_dir: str):
     rng, *subkeys = jax.random.split(jax.random.PRNGKey(0), NUM_ENVS + 1)
     state = env_reset_fn(jnp.array(subkeys))
     trajectory, selected_actions = [state], []
-    for i in tqdm(range(100_000_000 // NUM_ENVS)):
+    for i in tqdm(range(1, 100_000_000 // NUM_ENVS)):
         rng, subkey = jax.random.split(rng)
         action, log_prob = policy_nn.sample_action(state.obs["state"], subkey)
         selected_actions.append((action, log_prob))
@@ -243,7 +249,7 @@ def train(env_id: str, log_dir: str):
         state = env_step_fn(state, action)
         trajectory.append(state)
 
-        if i % UNROLL_LENGTH == 0 and i != 0:
+        if i % UNROLL_LENGTH == 0:
             assert len(trajectory) == UNROLL_LENGTH + 1
             assert len(selected_actions) == UNROLL_LENGTH
 
@@ -294,7 +300,7 @@ def train(env_id: str, log_dir: str):
             trajectory = trajectory[-1:]  # Keep the last state for the next rollout
             selected_actions = []  # Reset actions for the next rollout
 
-        if i % 2500 == 0:
+        if i == 1 or i % 2500 == 0:
             # Save the model checkpoint
             checkpointer = ocp.StandardCheckpointer()
             ckpt_dir: Path = Path(log_dir / CKPT_DIR).resolve()
@@ -330,14 +336,14 @@ def evaluate(
         lambda: GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
     )
     checkpointer = ocp.StandardCheckpointer()
-    ckpt_dir: Path = Path(log_dir / CKPT_DIR).resolve()
+    ckpt_dir: Path = (Path(log_dir) / CKPT_DIR).resolve()
     _graphdef, _abstract_state = nnx.split(abstract_model)
     _state = checkpointer.restore(ckpt_dir, _abstract_state)
     policy_nn = nnx.merge(_graphdef, _state)
 
     scores = []
-    for n in tqdm(range(n_episodes)):
-        print(f"Evaluating episode {n + 1}/{n_episodes}...")
+    for n in range(n_episodes):
+        # print(f"Evaluating episode {n + 1}/{n_episodes}...")
         rng = jax.random.PRNGKey(n)
         state = env_reset_fn(rng)
         trajectory = [state]
