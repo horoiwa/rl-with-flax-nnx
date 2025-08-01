@@ -41,7 +41,7 @@ CKPT_DIR = "checkpoints"
 
 
 def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
-    env, env_cfg = registry.load(env_id), registry.load_config(env_id)
+    env, env_cfg = registry.load(env_id), registry.get_default_config(env_id)
     obs_dim: int = env.observation_size["state"][0]
     priv_obs_dim: int = env.observation_size["privileged_state"][0]
     action_dim: int = env.action_size
@@ -66,23 +66,32 @@ class GaussianPolicy(nnx.Module):
         self.dense_1 = nnx.Linear(
             in_features=obs_dim,
             out_features=512,
-            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.orthogonal(),
+            kernel_init=nnx.initializers.zeros(),
             rngs=rngs,
         )
         self.dense_2 = nnx.Linear(
             in_features=512,
             out_features=256,
-            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.orthogonal(),
+            kernel_init=nnx.initializers.zeros(),
             rngs=rngs,
         )
         self.dense_3 = nnx.Linear(
             in_features=256,
             out_features=128,
-            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.orthogonal(),
+            kernel_init=nnx.initializers.zeros(),
             rngs=rngs,
         )
 
-        self.mu = nnx.Linear(in_features=128, out_features=action_dim, rngs=rngs)
+        self.mu = nnx.Linear(
+            in_features=128,
+            out_features=action_dim,
+            # kernel_init=nnx.initializers.orthogonal(),
+            kernel_init=nnx.initializers.zeros(),
+            rngs=rngs,
+        )
 
         # NOTE DEBUG
         # self.log_std = nnx.Param(jnp.zeros(action_dim))
@@ -114,25 +123,29 @@ class ValueNN(nnx.Module):
         self.dense_1 = nnx.Linear(
             in_features=obs_dim,
             out_features=512,
-            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.orthogonal(),
+            kernel_init=nnx.initializers.zeros(),
             rngs=rngs,
         )
         self.dense_2 = nnx.Linear(
             in_features=512,
             out_features=256,
-            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.orthogonal(),
+            kernel_init=nnx.initializers.zeros(),
             rngs=rngs,
         )
         self.dense_3 = nnx.Linear(
             in_features=256,
             out_features=128,
-            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.orthogonal(),
+            kernel_init=nnx.initializers.zeros(),
             rngs=rngs,
         )
         self.out = nnx.Linear(
             in_features=128,
             out_features=1,
-            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.orthogonal(),
+            kernel_init=nnx.initializers.zeros(),
             rngs=rngs,
         )
 
@@ -253,14 +266,14 @@ def train(env_id: str, log_dir: str):
 
         state = env_step_fn(state, action)
         trajectory.append(state)
+        print(state.reward, state.done)
 
         if i % UNROLL_LENGTH == 0:
             assert len(trajectory) == UNROLL_LENGTH + 1
             assert len(selected_actions) == UNROLL_LENGTH
 
-            rewards = (jnp.stack([s.reward for s in trajectory[1:]], axis=1),)
-            dones = (jnp.stack([s.done for s in trajectory[1:]], axis=1),)
-            import pdb; pdb.set_trace()  # fmt: skip
+            rewards = jnp.stack([s.reward for s in trajectory[1:]], axis=1)
+            dones = jnp.stack([s.done for s in trajectory[1:]], axis=1)
 
             advantages, target_values = compute_advantage_and_target(
                 value_nn,
@@ -286,6 +299,7 @@ def train(env_id: str, log_dir: str):
                 "advantages": advantages.reshape(B * T, 1),
                 "target_values": target_values.reshape(B * T, 1),
             }
+            import pdb; pdb.set_trace()  # fmt: skip
 
             # Update networks
             for _ in range(NUM_UPDATE_PER_BATCH):
