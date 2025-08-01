@@ -24,9 +24,13 @@ from mujoco_playground import wrapper, registry
 from mujoco_playground.config import locomotion_params
 
 # Hyperparameters
-NUM_ENVS = 1024
-BATCH_SIZE = 256
-UNROLL_LENGTH = 10
+# NUM_ENVS = 1024
+# BATCH_SIZE = 256
+# UNROLL_LENGTH = 10
+NUM_ENVS = 4
+BATCH_SIZE = 16
+UNROLL_LENGTH = 48
+
 NUM_UPDATE_PER_BATCH = 16
 DISCOUNT = 0.98
 GAE_LAMBDA = 0.95
@@ -37,7 +41,7 @@ CKPT_DIR = "checkpoints"
 
 
 def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
-    env, env_cfg = registry.load(env_id), registry.get_default_config(env_id)
+    env, env_cfg = registry.load(env_id), registry.load_config(env_id)
     obs_dim: int = env.observation_size["state"][0]
     priv_obs_dim: int = env.observation_size["privileged_state"][0]
     action_dim: int = env.action_size
@@ -140,6 +144,7 @@ class ValueNN(nnx.Module):
         return out
 
 
+@nnx.jit
 def train_step(
     batch_data: dict,
     policy_nn: GaussianPolicy,
@@ -253,11 +258,15 @@ def train(env_id: str, log_dir: str):
             assert len(trajectory) == UNROLL_LENGTH + 1
             assert len(selected_actions) == UNROLL_LENGTH
 
+            rewards = (jnp.stack([s.reward for s in trajectory[1:]], axis=1),)
+            dones = (jnp.stack([s.done for s in trajectory[1:]], axis=1),)
+            import pdb; pdb.set_trace()  # fmt: skip
+
             advantages, target_values = compute_advantage_and_target(
                 value_nn,
                 obs=jnp.stack([s.obs["privileged_state"] for s in trajectory], axis=1),
-                rewards=jnp.stack([s.reward for s in trajectory[1:]], axis=1),
-                dones=jnp.stack([s.done for s in trajectory[1:]], axis=1),
+                rewards=rewards,
+                dones=dones,
             )
 
             B, T = NUM_ENVS, UNROLL_LENGTH
@@ -293,7 +302,7 @@ def train(env_id: str, log_dir: str):
                 )
             else:
                 wandb.log(
-                    {"ploss": ploss, "vloss": vloss},
+                    {"ploss": ploss, "vloss": vloss, "reward": rewards.sum()},
                     step=i * NUM_ENVS,
                 )
 
