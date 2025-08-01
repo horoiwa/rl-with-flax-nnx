@@ -316,7 +316,11 @@ def train(env_id: str, log_dir: str):
                 )
             else:
                 wandb.log(
-                    {"ploss": ploss, "vloss": vloss, "reward": rewards.sum()},
+                    {
+                        "ploss": ploss,
+                        "vloss": vloss,
+                        "reward": rewards.sum(axis=-1).mean(),
+                    },
                     step=i * NUM_ENVS,
                 )
 
@@ -333,7 +337,7 @@ def train(env_id: str, log_dir: str):
             # Evaluate
             test_score = evaluate(
                 env_id=env_id,
-                n_episodes=3,
+                n_episodes=1,
                 log_dir=log_dir,
                 record_video=True,
             )
