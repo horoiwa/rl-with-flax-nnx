@@ -67,21 +67,21 @@ class GaussianPolicy(nnx.Module):
             in_features=obs_dim,
             out_features=512,
             # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros(),
+            kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.dense_2 = nnx.Linear(
             in_features=512,
             out_features=256,
             # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros(),
+            kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.dense_3 = nnx.Linear(
             in_features=256,
             out_features=128,
             # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros(),
+            kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
 
@@ -89,7 +89,7 @@ class GaussianPolicy(nnx.Module):
             in_features=128,
             out_features=action_dim,
             # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros(),
+            kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
 
@@ -124,28 +124,28 @@ class ValueNN(nnx.Module):
             in_features=obs_dim,
             out_features=512,
             # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros(),
+            kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.dense_2 = nnx.Linear(
             in_features=512,
             out_features=256,
             # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros(),
+            kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.dense_3 = nnx.Linear(
             in_features=256,
             out_features=128,
             # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros(),
+            kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.out = nnx.Linear(
             in_features=128,
             out_features=1,
             # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros(),
+            kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
 
@@ -272,8 +272,9 @@ def train(env_id: str, log_dir: str):
             assert len(trajectory) == UNROLL_LENGTH + 1
             assert len(selected_actions) == UNROLL_LENGTH
 
-            rewards = jnp.stack([s.reward for s in trajectory[1:]], axis=1)
+            _rewards = jnp.stack([s.reward for s in trajectory[1:]], axis=1)
             dones = jnp.stack([s.done for s in trajectory[1:]], axis=1)
+            rewards = jnp.where(dones, -jnp.ones_like(rewards), rewards)
 
             advantages, target_values = compute_advantage_and_target(
                 value_nn,
@@ -299,7 +300,6 @@ def train(env_id: str, log_dir: str):
                 "advantages": advantages.reshape(B * T, 1),
                 "target_values": target_values.reshape(B * T, 1),
             }
-            import pdb; pdb.set_trace()  # fmt: skip
 
             # Update networks
             for _ in range(NUM_UPDATE_PER_BATCH):
