@@ -13,7 +13,7 @@
 
 (mujoco-playground)[https://playground.mujoco.org/]
 
-
+(unitree-go1)[https://github.com/google-deepmind/mujoco_menagerie/blob/main/unitree_go1/go1.xml]
 
 
 (Pdb) ppo_params

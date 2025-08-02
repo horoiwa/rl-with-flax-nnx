@@ -16,6 +16,7 @@ import optax
 import orbax.checkpoint as ocp
 
 from brax.training.agents.ppo import train as brax_train
+from brax.training.agents.ppo import networks as ppo_networks
 
 # from brax import envs as brax_envs
 
@@ -24,12 +25,12 @@ from mujoco_playground import wrapper, registry
 from mujoco_playground.config import locomotion_params
 
 # Hyperparameters
-# NUM_ENVS = 1024
-# BATCH_SIZE = 256
-# UNROLL_LENGTH = 10
-NUM_ENVS = 4
-BATCH_SIZE = 16
-UNROLL_LENGTH = 48
+NUM_ENVS = 1024
+BATCH_SIZE = 256
+UNROLL_LENGTH = 20
+# NUM_ENVS = 4
+# BATCH_SIZE = 16
+# UNROLL_LENGTH = 48
 
 NUM_UPDATE_PER_BATCH = 16
 DISCOUNT = 0.98
@@ -38,6 +39,7 @@ CLIP_EPS = 0.2
 ENTROPY_COEF = 0.01
 MAX_GRAD_NORM = 1.0
 CKPT_DIR = "checkpoints"
+SEED = 0
 
 
 def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
@@ -100,11 +102,14 @@ class GaussianPolicy(nnx.Module):
         x = nnx.elu(self.dense_1(x))
         x = nnx.elu(self.dense_2(x))
         x = nnx.elu(self.dense_3(x))
+
         mu = nnx.tanh(self.mu(x))
+        # NOTE DEBUG
+        # mu = self.mu(x)
 
         # NOTE DEBUG
         # std = jnp.repeat(jnp.exp(self.log_std[None, :]), mu.shape[0], axis=0)
-        std = jnp.repeat(jnp.zeros(self.action_dim)[None, :] + 0.1, mu.shape[0], axis=0)
+        std = jnp.repeat(jnp.zeros(self.action_dim)[None, :] + 0.2, mu.shape[0], axis=0)
 
         return mu, std
 
@@ -206,7 +211,7 @@ def train_step(
 
 
 @nnx.jit
-def compute_advantage_and_target(value_nn, obs, rewards, dones):
+def _compute_advantage_and_target(value_nn, obs, rewards, dones):
     """Computes advantage(GAE) and value targets."""
     B, T, _ = obs.shape
     values = value_nn(obs.reshape(B * T, -1)).reshape(B, T)
@@ -226,6 +231,17 @@ def compute_advantage_and_target(value_nn, obs, rewards, dones):
     target_values = gae + values_t
 
     return gae, target_values
+
+
+@nnx.jit
+def compute_advantage_and_target(value_nn, obs, rewards, dones):
+    # NOTE DEBUG
+    B, T, _ = obs.shape
+    values = value_nn(obs.reshape(B * T, -1)).reshape(B, T)
+    values_t, values_t_plus_1 = values[:, :-1], values[:, 1:]
+    target_values = rewards + DISCOUNT * (1 - dones) * values_t_plus_1
+    advantage = target_values - values_t
+    return advantage, target_values
 
 
 def train(env_id: str, log_dir: str):
@@ -256,7 +272,7 @@ def train(env_id: str, log_dir: str):
         ),
     )
 
-    rng, *subkeys = jax.random.split(jax.random.PRNGKey(0), NUM_ENVS + 1)
+    rng, *subkeys = jax.random.split(jax.random.PRNGKey(SEED), NUM_ENVS + 1)
     state = env_reset_fn(jnp.array(subkeys))
     trajectory, selected_actions = [state], []
     for i in tqdm(range(1, 100_000_000 // NUM_ENVS)):
@@ -266,14 +282,14 @@ def train(env_id: str, log_dir: str):
 
         state = env_step_fn(state, action)
         trajectory.append(state)
-        print(state.reward, state.done)
 
         if i % UNROLL_LENGTH == 0:
             assert len(trajectory) == UNROLL_LENGTH + 1
             assert len(selected_actions) == UNROLL_LENGTH
 
-            _rewards = jnp.stack([s.reward for s in trajectory[1:]], axis=1)
+            rewards = jnp.stack([s.reward for s in trajectory[1:]], axis=1)
             dones = jnp.stack([s.done for s in trajectory[1:]], axis=1)
+            # NOTE Experimental
             rewards = jnp.where(dones, -jnp.ones_like(rewards), rewards)
 
             advantages, target_values = compute_advantage_and_target(
@@ -327,7 +343,7 @@ def train(env_id: str, log_dir: str):
             trajectory = trajectory[-1:]  # Keep the last state for the next rollout
             selected_actions = []  # Reset actions for the next rollout
 
-        if i == 1 or i % 2500 == 0:
+        if i % 10000 == 0:
             # Save the model checkpoint
             checkpointer = ocp.StandardCheckpointer()
             ckpt_dir: Path = Path(log_dir / CKPT_DIR).resolve()
@@ -426,6 +442,12 @@ def run_evaluation(env_id: str, log_dir: str):
     evaluate(
         env_id=env_id, log_dir=f"{log_dir}/{env_id}", n_episodes=5, record_video=True
     )
+
+
+@cli.command(name="dev")
+def debug():
+    pass
+    import pdb; pdb.set_trace()  # fmt: skip
 
 
 if __name__ == "__main__":
