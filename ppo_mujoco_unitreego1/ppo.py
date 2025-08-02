@@ -108,7 +108,8 @@ class GaussianPolicy(nnx.Module):
     def sample_action(self, obs, key: jax.random.PRNGKey):
         assert obs.ndim == 2, "Input must be (batch_size, obs_dim)"
         mu, std = self(obs)
-        action = nnx.tanh(mu) + std * jax.random.normal(key, shape=mu.shape)
+        mu = nnx.tanh(mu)
+        action = mu + std * jax.random.normal(key, shape=mu.shape)
         log_prob = jax.scipy.stats.norm.logpdf(action, loc=mu, scale=std).sum(axis=-1)
         return action, log_prob
 
@@ -198,7 +199,7 @@ def train_step(
 
 
 @nnx.jit
-def _compute_advantage_and_target(value_nn, obs, rewards, dones):
+def compute_advantage_and_target(value_nn, obs, rewards, dones):
     """Computes advantage(GAE) and value targets."""
     B, T, _ = obs.shape
     values = value_nn(obs.reshape(B * T, -1)).reshape(B, T)
@@ -221,7 +222,7 @@ def _compute_advantage_and_target(value_nn, obs, rewards, dones):
 
 
 @nnx.jit
-def compute_advantage_and_target(value_nn, obs, rewards, dones):
+def _compute_advantage_and_target(value_nn, obs, rewards, dones):
     # NOTE DEBUG
     B, T, _ = obs.shape
     values = value_nn(obs.reshape(B * T, -1)).reshape(B, T)
@@ -326,7 +327,6 @@ def train(env_id: str, log_dir: str):
                     },
                     step=i * NUM_ENVS,
                 )
-
             trajectory = trajectory[-1:]  # Keep the last state for the next rollout
             selected_actions = []  # Reset actions for the next rollout
 
