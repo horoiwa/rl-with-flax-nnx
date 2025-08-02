@@ -68,30 +68,30 @@ class GaussianPolicy(nnx.Module):
         self.dense_1 = nnx.Linear(
             in_features=obs_dim,
             out_features=512,
-            # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros_init(),
+            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.dense_2 = nnx.Linear(
             in_features=512,
             out_features=256,
-            # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros_init(),
+            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.dense_3 = nnx.Linear(
             in_features=256,
             out_features=128,
-            # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros_init(),
+            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
 
         self.mu = nnx.Linear(
             in_features=128,
             out_features=action_dim,
-            # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros_init(),
+            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
 
@@ -128,29 +128,29 @@ class ValueNN(nnx.Module):
         self.dense_1 = nnx.Linear(
             in_features=obs_dim,
             out_features=512,
-            # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros_init(),
+            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.dense_2 = nnx.Linear(
             in_features=512,
             out_features=256,
-            # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros_init(),
+            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.dense_3 = nnx.Linear(
             in_features=256,
             out_features=128,
-            # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros_init(),
+            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.out = nnx.Linear(
             in_features=128,
             out_features=1,
-            # kernel_init=nnx.initializers.orthogonal(),
-            kernel_init=nnx.initializers.zeros_init(),
+            kernel_init=nnx.initializers.orthogonal(),
+            # kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
 
