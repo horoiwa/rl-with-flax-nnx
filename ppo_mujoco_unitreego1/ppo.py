@@ -90,18 +90,16 @@ class GaussianPolicy(nnx.Module):
             kernel_init=nnx.initializers.orthogonal(),
             rngs=rngs,
         )
-
-        # NOTE DEBUG
-        # self.log_std = nnx.Param(jnp.zeros(action_dim))
+        self.log_std = nnx.Param(jnp.zeros(action_dim))
 
     def __call__(self, x):
         x = nnx.elu(self.dense_1(x))
         x = nnx.elu(self.dense_2(x))
         x = nnx.elu(self.dense_3(x))
         mu = self.mu(x)
+        std = (nnx.softplus(self.log_std) + 0.01) * jnp.ones_like(mu)
         # NOTE DEBUG
-        # std = jnp.repeat(jnp.exp(self.log_std[None, :]), mu.shape[0], axis=0)
-        std = jnp.repeat(jnp.zeros(self.action_dim)[None, :] + 0.2, mu.shape[0], axis=0)
+        # std = jnp.repeat(jnp.zeros(self.action_dim)[None, :] + 0.2, mu.shape[0], axis=0)
         return mu, std
 
     @nnx.jit
