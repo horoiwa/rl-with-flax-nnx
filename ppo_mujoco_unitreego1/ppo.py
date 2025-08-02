@@ -108,10 +108,20 @@ class GaussianPolicy(nnx.Module):
     def sample_action(self, obs, key: jax.random.PRNGKey):
         assert obs.ndim == 2, "Input must be (batch_size, obs_dim)"
         mu, std = self(obs)
+        # 問題のある実装
         mu = nnx.tanh(mu)
         action = mu + std * jax.random.normal(key, shape=mu.shape)
         log_prob = jax.scipy.stats.norm.logpdf(action, loc=mu, scale=std).sum(axis=-1)
         return action, log_prob
+
+    def log_prob(self, action, loc, scale):
+        # WIP:
+        log_prob_raw = jax.scipy.stats.norm.logpdf(action, loc=loc, scale=scale).sum(
+            axis=-1
+        )
+        log_det_jacobian = jnp.sum(jnp.log(1 - nnx.tanh(action) ** 2 + 1e-6), axis=-1)
+        log_prob = log_prob_raw - log_det_jacobian
+        return log_prob
 
 
 class ValueNN(nnx.Module):
@@ -278,7 +288,7 @@ def train(env_id: str, log_dir: str):
             rewards = jnp.stack([s.reward for s in trajectory[1:]], axis=1)
             dones = jnp.stack([s.done for s in trajectory[1:]], axis=1)
             # NOTE Experimental
-            rewards = jnp.where(dones, -jnp.ones_like(rewards), rewards)
+            # rewards = jnp.where(dones, -jnp.ones_like(rewards), rewards)
 
             advantages, target_values = compute_advantage_and_target(
                 value_nn,
