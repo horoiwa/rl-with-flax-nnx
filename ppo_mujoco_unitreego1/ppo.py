@@ -98,26 +98,17 @@ class GaussianPolicy(nnx.Module):
         x = nnx.elu(self.dense_1(x))
         x = nnx.elu(self.dense_2(x))
         x = nnx.elu(self.dense_3(x))
-
-        # mu = nnx.tanh(self.mu(x))
-        # NOTE DEBUG
         mu = self.mu(x)
-
         # NOTE DEBUG
         # std = jnp.repeat(jnp.exp(self.log_std[None, :]), mu.shape[0], axis=0)
         std = jnp.repeat(jnp.zeros(self.action_dim)[None, :] + 0.2, mu.shape[0], axis=0)
-
         return mu, std
 
     @nnx.jit
     def sample_action(self, obs, key: jax.random.PRNGKey):
         assert obs.ndim == 2, "Input must be (batch_size, obs_dim)"
         mu, std = self(obs)
-
-        # NOTE DEBUG
-        mu = nnx.tanh(mu)
-
-        action = mu + std * jax.random.normal(key, shape=mu.shape)
+        action = nnx.tanh(mu) + std * jax.random.normal(key, shape=mu.shape)
         log_prob = jax.scipy.stats.norm.logpdf(action, loc=mu, scale=std).sum(axis=-1)
         return action, log_prob
 
