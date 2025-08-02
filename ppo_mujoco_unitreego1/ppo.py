@@ -353,7 +353,7 @@ def train(env_id: str, log_dir: str):
             # Evaluate
             test_score = evaluate(
                 env_id=env_id,
-                n_episodes=1,
+                n_episodes=3,
                 log_dir=log_dir,
                 record_video=True,
             )
