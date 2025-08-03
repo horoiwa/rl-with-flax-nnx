@@ -60,7 +60,7 @@ def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
     return env, env_cfg, obs_dim, priv_obs_dim, action_dim, reset_fn, step_fn
 
 
-class GaussianPolicy(nnx.Module):
+class TanhNormalPolicy(nnx.Module):
     def __init__(self, obs_dim, action_dim: int, rngs: nnx.Rngs):
 
         self.action_dim = action_dim
@@ -97,7 +97,7 @@ class GaussianPolicy(nnx.Module):
         x = nnx.elu(self.dense_2(x))
         x = nnx.elu(self.dense_3(x))
         mu = self.mu(x)
-        # std = (nnx.softplus(self.log_std) + 0.01) * jnp.ones_like(mu)
+        # std = (nnx.softplus(self.log_std) + 0.001) * jnp.ones_like(mu)
         # NOTE DEBUG
         std = 0.2 * jnp.ones_like(mu)
         return mu, std
@@ -161,7 +161,7 @@ class ValueNN(nnx.Module):
 @nnx.jit
 def train_step(
     batch_data: dict,
-    policy_nn: GaussianPolicy,
+    policy_nn: TanhNormalPolicy,
     value_nn: ValueNN,
     policy_optimizer: optax.GradientTransformation,
     value_optimizer: optax.GradientTransformation,
@@ -241,7 +241,9 @@ def train(env_id: str, log_dir: str):
     )
     # ppo_config = locomotion_params.brax_ppo_config(env_id)
 
-    policy_nn = GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
+    policy_nn = TanhNormalPolicy(
+        obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0)
+    )
     policy_optimizer = nnx.Optimizer(
         policy_nn,
         optax.chain(
@@ -302,6 +304,9 @@ def train(env_id: str, log_dir: str):
                 "target_values": target_values.reshape(B * T, 1),
             }
 
+            if jnp.isnan(batch_data["advantages"]).any():
+                import pdb; pdb.set_trace() # fmt: skip
+
             # Update networks
             for _ in range(NUM_UPDATE_PER_BATCH):
                 rng, subkey = jax.random.split(rng)
@@ -360,7 +365,9 @@ def evaluate(
 
     # Load the trained policy
     abstract_model = nnx.eval_shape(
-        lambda: GaussianPolicy(obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0))
+        lambda: TanhNormalPolicy(
+            obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0)
+        )
     )
     checkpointer = ocp.StandardCheckpointer()
     ckpt_dir: Path = (Path(log_dir) / CKPT_DIR).resolve()
