@@ -28,7 +28,7 @@ from mujoco_playground.config import locomotion_params
 NUM_ENVS = 1024
 BATCH_SIZE = 256
 UNROLL_LENGTH = 20
-NUM_UPDATE_PER_BATCH = 48
+NUM_UPDATE_PER_BATCH = 32
 
 DISCOUNT = 0.98
 GAE_LAMBDA = 0.95
@@ -273,7 +273,7 @@ def train(env_id: str, log_dir: str):
     rng, *subkeys = jax.random.split(jax.random.PRNGKey(SEED), NUM_ENVS + 1)
     state = env_reset_fn(jnp.array(subkeys))
     trajectory, selected_actions = [state], []
-    for i in tqdm(range(1, 100_000_000 // NUM_ENVS)):
+    for i in tqdm(range(1, 500_000_000 // NUM_ENVS)):
         rng, subkey = jax.random.split(rng)
         action, raw_action, log_prob = policy_nn.sample_action(
             state.obs["state"], subkey
@@ -338,17 +338,11 @@ def train(env_id: str, log_dir: str):
                     },
                     step=i * NUM_ENVS,
                 )
-                if jnp.isnan(ploss) or jnp.isinf(ploss) or jnp.isneginf(ploss):
-                    print("Loss is NaN, stopping training.")
-                    import pdb; pdb.set_trace()  # fmt: skip
 
             trajectory = trajectory[-1:]  # Keep the last state for the next rollout
             selected_actions = []  # Reset actions for the next rollout
 
-        if i % 100:
-            print("DEBUG", ploss)
-
-        if i % 10000 == 0:
+        if i % 10_000 == 0:
             # Save the model checkpoint
             checkpointer = ocp.StandardCheckpointer()
             ckpt_dir: Path = Path(log_dir / CKPT_DIR).resolve()
@@ -360,7 +354,7 @@ def train(env_id: str, log_dir: str):
                 env_id=env_id,
                 n_episodes=3,
                 log_dir=log_dir,
-                record_video=True,
+                record_video=True if i % 100_000 == 0 else False,
             )
             wandb.log(
                 {"episode_reward": test_score},
