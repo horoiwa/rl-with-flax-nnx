@@ -60,7 +60,7 @@ def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
     return env, env_cfg, obs_dim, priv_obs_dim, action_dim, reset_fn, step_fn
 
 
-class TanhNormalPolicy(nnx.Module):
+class SquashedGaussianPolicy(nnx.Module):
     def __init__(self, obs_dim, action_dim: int, rngs: nnx.Rngs):
 
         self.action_dim = action_dim
@@ -97,29 +97,46 @@ class TanhNormalPolicy(nnx.Module):
         x = nnx.elu(self.dense_2(x))
         x = nnx.elu(self.dense_3(x))
         mu = self.mu(x)
-        # std = (nnx.softplus(self.log_std) + 0.001) * jnp.ones_like(mu)
-        # NOTE DEBUG
-        std = 0.2 * jnp.ones_like(mu)
+        std = (nnx.softplus(self.log_std) + 0.001) * jnp.ones_like(mu)
         return mu, std
 
     @nnx.jit
     def sample_action(self, obs, key: jax.random.PRNGKey):
         assert obs.ndim == 2, "Input must be (batch_size, obs_dim)"
         mu, std = self(obs)
-        # 問題のある実装
-        # mu = nnx.tanh(mu)
-        action = mu + std * jax.random.normal(key, shape=mu.shape)
-        log_prob = jax.scipy.stats.norm.logpdf(action, loc=mu, scale=std).sum(axis=-1)
-        return action, log_prob
+        raw_action = mu + std * jax.random.normal(key, shape=mu.shape)
+        action = nnx.tanh(raw_action)
+        log_prob = self.log_prob(raw_action, mu, std)
+        return action, raw_action, log_prob
 
-    def log_prob(self, action, loc, scale):
-        # WIP:
-        log_prob_raw = jax.scipy.stats.norm.logpdf(action, loc=loc, scale=scale).sum(
-            axis=-1
-        )
-        log_det_jacobian = jnp.sum(jnp.log(1 - nnx.tanh(action) ** 2 + 1e-6), axis=-1)
-        log_prob = log_prob_raw - log_det_jacobian
+    def log_prob(self, raw_action, loc, scale):
+        log_prob_normal = -0.5 * (
+            jnp.square((raw_action - loc) / scale) + jnp.log(2 * jnp.pi * scale**2)
+        ).sum(axis=-1, keepdims=True)
+
+        # log(1 - tanh(x)^2) を数値的に安定した形で計算
+        log_det_jacobian = 2.0 * (
+            jnp.log(2.0) - raw_action - jax.nn.softplus(-2.0 * raw_action)
+        ).sum(axis=-1, keepdims=True)
+
+        log_prob = log_prob_normal - log_det_jacobian
         return log_prob
+
+    def entropy(self, loc, scale, key: jax.random.PRNGKey):
+        # tanh(Normal) のエントロピーは解析的に計算できないのでサンプリングして近似
+        raw_action_sampled = loc + scale * jax.random.normal(key, shape=loc.shape)
+
+        entropy_normal = 0.5 * (1 + jnp.log(2 * jnp.pi * scale**2)).sum(
+            axis=-1, keepdims=True
+        )
+        # log(1 - tanh(x)^2) を数値的に安定した形で計算
+        log_det_jacobian = 2.0 * (
+            jnp.log(2.0)
+            - raw_action_sampled
+            - jax.nn.softplus(-2.0 * raw_action_sampled)
+        ).sum(axis=-1, keepdims=True)
+        entropy = entropy_normal + log_det_jacobian
+        return entropy
 
 
 class ValueNN(nnx.Module):
@@ -161,10 +178,11 @@ class ValueNN(nnx.Module):
 @nnx.jit
 def train_step(
     batch_data: dict,
-    policy_nn: TanhNormalPolicy,
+    policy_nn: SquashedGaussianPolicy,
     value_nn: ValueNN,
     policy_optimizer: optax.GradientTransformation,
     value_optimizer: optax.GradientTransformation,
+    key: jax.random.PRNGKey,
 ):
     advantages = batch_data["advantages"]
     normalized_advantages = (advantages - jnp.mean(advantages)) / (
@@ -173,18 +191,14 @@ def train_step(
 
     def policy_loss_fn(policy_nn):
         mu, std = policy_nn(batch_data["obs_policy"])
-        new_log_probs = jax.scipy.stats.norm.logpdf(
-            batch_data["actions"], loc=mu, scale=std
-        ).sum(axis=-1, keepdims=True)
+        new_log_probs = policy_nn.log_prob(batch_data["raw_actions"], loc=mu, scale=std)
 
         ratio = jnp.exp(new_log_probs - batch_data["old_log_probs"])
         surr1 = ratio * normalized_advantages
         surr2 = jnp.clip(ratio, 1.0 - CLIP_EPS, 1.0 + CLIP_EPS) * normalized_advantages
         policy_loss = -1 * jnp.minimum(surr1, surr2)
 
-        entropy = jnp.sum(
-            0.5 * (1 + jnp.log(2 * jnp.pi * std**2)), axis=-1, keepdims=True
-        )
+        entropy = policy_nn.entropy(mu, std, key)
         entropy_loss = -1 * ENTROPY_COEF * entropy
 
         loss = jnp.mean(policy_loss + entropy_loss)
@@ -241,7 +255,7 @@ def train(env_id: str, log_dir: str):
     )
     # ppo_config = locomotion_params.brax_ppo_config(env_id)
 
-    policy_nn = TanhNormalPolicy(
+    policy_nn = SquashedGaussianPolicy(
         obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0)
     )
     policy_optimizer = nnx.Optimizer(
@@ -264,8 +278,10 @@ def train(env_id: str, log_dir: str):
     trajectory, selected_actions = [state], []
     for i in tqdm(range(1, 100_000_000 // NUM_ENVS)):
         rng, subkey = jax.random.split(rng)
-        action, log_prob = policy_nn.sample_action(state.obs["state"], subkey)
-        selected_actions.append((action, log_prob))
+        action, raw_action, log_prob = policy_nn.sample_action(
+            state.obs["state"], subkey
+        )
+        selected_actions.append((action, raw_action, log_prob))
 
         state = env_step_fn(state, action)
         trajectory.append(state)
@@ -276,8 +292,6 @@ def train(env_id: str, log_dir: str):
 
             rewards = jnp.stack([s.reward for s in trajectory[1:]], axis=1)
             dones = jnp.stack([s.done for s in trajectory[1:]], axis=1)
-            # NOTE Experimental
-            # rewards = jnp.where(dones, -jnp.ones_like(rewards), rewards)
 
             advantages, target_values = compute_advantage_and_target(
                 value_nn,
@@ -294,23 +308,20 @@ def train(env_id: str, log_dir: str):
                 "obs_value": jnp.stack(
                     [s.obs["privileged_state"] for s in trajectory[:-1]], axis=1
                 ).reshape(B * T, -1),
-                "actions": jnp.stack([a[0] for a in selected_actions], axis=1).reshape(
-                    B * T, -1
-                ),
-                "old_log_probs": jnp.stack(
+                "raw_actions": jnp.stack(
                     [a[1] for a in selected_actions], axis=1
+                ).reshape(B * T, -1),
+                "old_log_probs": jnp.stack(
+                    [a[2] for a in selected_actions], axis=1
                 ).reshape(B * T, 1),
                 "advantages": advantages.reshape(B * T, 1),
                 "target_values": target_values.reshape(B * T, 1),
             }
 
-            if jnp.isnan(batch_data["advantages"]).any():
-                import pdb; pdb.set_trace() # fmt: skip
-
             # Update networks
             for _ in range(NUM_UPDATE_PER_BATCH):
-                rng, subkey = jax.random.split(rng)
-                indices = jax.random.permutation(subkey, B * T)[:BATCH_SIZE]
+                rng, subkey1, subkey2 = jax.random.split(rng, 3)
+                indices = jax.random.permutation(subkey1, B * T)[:BATCH_SIZE]
                 _batch_data = jax.tree_util.tree_map(lambda x: x[indices], batch_data)
 
                 ploss, vloss = train_step(
@@ -319,6 +330,7 @@ def train(env_id: str, log_dir: str):
                     value_nn=value_nn,
                     policy_optimizer=policy_optimizer,
                     value_optimizer=value_optimizer,
+                    key=subkey2,
                 )
             else:
                 wandb.log(
@@ -365,7 +377,7 @@ def evaluate(
 
     # Load the trained policy
     abstract_model = nnx.eval_shape(
-        lambda: TanhNormalPolicy(
+        lambda: SquashedGaussianPolicy(
             obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0)
         )
     )
@@ -383,7 +395,7 @@ def evaluate(
         trajectory = [state]
         for _ in range(env_cfg.episode_length):
             rng, subkey = jax.random.split(rng)
-            action, _ = policy_nn.sample_action(
+            action, _, _ = policy_nn.sample_action(
                 state.obs["state"].reshape(1, -1), subkey
             )
             state = env_step_fn(state, action[0])
