@@ -28,11 +28,8 @@ from mujoco_playground.config import locomotion_params
 NUM_ENVS = 1024
 BATCH_SIZE = 256
 UNROLL_LENGTH = 20
-# NUM_ENVS = 4
-# BATCH_SIZE = 16
-# UNROLL_LENGTH = 48
+NUM_UPDATE_PER_BATCH = 48
 
-NUM_UPDATE_PER_BATCH = 16
 DISCOUNT = 0.98
 GAE_LAMBDA = 0.95
 CLIP_EPS = 0.2
@@ -341,8 +338,15 @@ def train(env_id: str, log_dir: str):
                     },
                     step=i * NUM_ENVS,
                 )
+                if jnp.isnan(ploss) or jnp.isinf(ploss) or jnp.isneginf(ploss):
+                    print("Loss is NaN, stopping training.")
+                    import pdb; pdb.set_trace()  # fmt: skip
+
             trajectory = trajectory[-1:]  # Keep the last state for the next rollout
             selected_actions = []  # Reset actions for the next rollout
+
+        if i % 100:
+            print("DEBUG", ploss)
 
         if i % 10000 == 0:
             # Save the model checkpoint
