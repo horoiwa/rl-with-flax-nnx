@@ -97,9 +97,9 @@ class GaussianPolicy(nnx.Module):
         x = nnx.elu(self.dense_2(x))
         x = nnx.elu(self.dense_3(x))
         mu = self.mu(x)
-        std = (nnx.softplus(self.log_std) + 0.01) * jnp.ones_like(mu)
+        # std = (nnx.softplus(self.log_std) + 0.01) * jnp.ones_like(mu)
         # NOTE DEBUG
-        # std = jnp.repeat(jnp.zeros(self.action_dim)[None, :] + 0.2, mu.shape[0], axis=0)
+        std = 0.2 * jnp.ones_like(mu)
         return mu, std
 
     @nnx.jit
@@ -107,7 +107,7 @@ class GaussianPolicy(nnx.Module):
         assert obs.ndim == 2, "Input must be (batch_size, obs_dim)"
         mu, std = self(obs)
         # 問題のある実装
-        mu = nnx.tanh(mu)
+        # mu = nnx.tanh(mu)
         action = mu + std * jax.random.normal(key, shape=mu.shape)
         log_prob = jax.scipy.stats.norm.logpdf(action, loc=mu, scale=std).sum(axis=-1)
         return action, log_prob
@@ -227,17 +227,6 @@ def compute_advantage_and_target(value_nn, obs, rewards, dones):
     target_values = gae + values_t
 
     return gae, target_values
-
-
-@nnx.jit
-def _compute_advantage_and_target(value_nn, obs, rewards, dones):
-    # NOTE DEBUG
-    B, T, _ = obs.shape
-    values = value_nn(obs.reshape(B * T, -1)).reshape(B, T)
-    values_t, values_t_plus_1 = values[:, :-1], values[:, 1:]
-    target_values = rewards + DISCOUNT * (1 - dones) * values_t_plus_1
-    advantage = target_values - values_t
-    return advantage, target_values
 
 
 def train(env_id: str, log_dir: str):
