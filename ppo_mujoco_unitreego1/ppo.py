@@ -258,7 +258,6 @@ def train(env_id: str, log_dir: str):
     (env, env_cfg, obs_dim, priv_obs_dim, action_dim, env_reset_fn, env_step_fn) = (
         create_env(env_id, num_envs=NUM_ENVS)
     )
-    # ppo_config = locomotion_params.brax_ppo_config(env_id)
 
     policy_nn = SquashedGaussianPolicy(
         obs_dim=obs_dim, action_dim=action_dim, rngs=nnx.Rngs(0)
