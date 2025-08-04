@@ -273,7 +273,7 @@ def train(env_id: str, log_dir: str):
             optax.clip_by_global_norm(MAX_GRAD_NORM),
             # optax.adam(learning_rate=3e-4),
             # NOTE EXPERIMENTAL
-            optax.adam(learning_rate=1e-4),
+            optax.adam(learning_rate=5e-5),
         ),
     )
 
@@ -289,7 +289,7 @@ def train(env_id: str, log_dir: str):
     rng, *subkeys = jax.random.split(jax.random.PRNGKey(SEED), NUM_ENVS + 1)
     state = env_reset_fn(jnp.array(subkeys))
     trajectory, selected_actions = [state], []
-    for i in tqdm(range(1, 200_000_000 // NUM_ENVS)):
+    for i in tqdm(range(1, 200_000_00 // NUM_ENVS + 1)):
         rng, subkey = jax.random.split(rng)
         action, raw_action, log_prob = policy_nn.sample_action(
             state.obs["state"], subkey
@@ -368,7 +368,7 @@ def train(env_id: str, log_dir: str):
             # Evaluate
             test_score = evaluate(
                 env_id=env_id,
-                n_episodes=3,
+                n_episodes=5,
                 log_dir=log_dir,
                 record_video=True if i % 40_000 == 0 else False,
             )
