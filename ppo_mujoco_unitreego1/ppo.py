@@ -42,7 +42,12 @@ SEED = 0
 
 
 def create_env(env_id: str, num_envs: int = 1):
-    env, env_cfg = registry.load(env_id), registry.get_default_config(env_id)
+    env_cfg = registry.get_default_config(env_id)
+
+    # NOTE EXPERIMENTAL
+    env_cfg["reward_config"]["scales"]["tracking_lin_vel"] = 5.0
+
+    env = registry.load(env_id, config=env_cfg)
     randomizer = registry.get_domain_randomizer(env_id)
     obs_dim: int = env.observation_size["state"][0]
     priv_obs_dim: int = env.observation_size["privileged_state"][0]
