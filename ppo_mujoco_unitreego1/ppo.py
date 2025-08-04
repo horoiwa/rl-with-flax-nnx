@@ -29,7 +29,7 @@ from mujoco_playground.config import locomotion_params
 NUM_ENVS = 1024
 BATCH_SIZE = 256
 UNROLL_LENGTH = 20
-NUM_UPDATE_PER_BATCH = 64
+NUM_UPDATE_PER_BATCH = 48
 
 DISCOUNT = 0.98
 GAE_LAMBDA = 0.95
@@ -38,24 +38,6 @@ ENTROPY_COEF = 0.01
 MAX_GRAD_NORM = 1.0
 CKPT_DIR = "checkpoints"
 SEED = 0
-
-
-def _create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
-    env, env_cfg = registry.load(env_id), registry.get_default_config(env_id)
-    obs_dim: int = env.observation_size["state"][0]
-    priv_obs_dim: int = env.observation_size["privileged_state"][0]
-    action_dim: int = env.action_size
-    if auto_reset:
-        env = wrapper.BraxAutoResetWrapper(env)
-
-    if num_envs == 1:
-        reset_fn = jax.jit(env.reset)
-        step_fn = jax.jit(env.step)
-    else:
-        reset_fn = jax.jit(jax.vmap(env.reset, in_axes=(0,)))
-        step_fn = jax.jit(jax.vmap(env.step, in_axes=(0, 0)))
-
-    return env, env_cfg, obs_dim, priv_obs_dim, action_dim, reset_fn, step_fn
 
 
 def create_env(env_id: str, num_envs: int = 1):
@@ -112,14 +94,15 @@ class SquashedGaussianPolicy(nnx.Module):
             kernel_init=nnx.initializers.orthogonal(),
             rngs=rngs,
         )
-        self.log_std = nnx.Param(jnp.zeros(action_dim))
+        # self.log_std = nnx.Param(jnp.zeros(action_dim))
 
     def __call__(self, x):
         x = nnx.elu(self.dense_1(x))
         x = nnx.elu(self.dense_2(x))
         x = nnx.elu(self.dense_3(x))
         mu = self.mu(x)
-        std = (nnx.softplus(self.log_std) + 0.001) * jnp.ones_like(mu)
+        # std = (nnx.softplus(self.log_std) + 0.001) * jnp.ones_like(mu)
+        std = (jnp.ones(self.action_dim) * 0.2) * jnp.ones_like(mu)
         return mu, std
 
     @nnx.jit
