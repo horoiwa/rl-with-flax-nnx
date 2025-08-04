@@ -45,7 +45,7 @@ def create_env(env_id: str, num_envs: int = 1):
     env_cfg = registry.get_default_config(env_id)
 
     # NOTE EXPERIMENTAL
-    env_cfg["reward_config"]["scales"]["tracking_lin_vel"] = 5.0
+    # env_cfg["reward_config"]["scales"]["tracking_lin_vel"] = 5.0
 
     env = registry.load(env_id, config=env_cfg)
     randomizer = registry.get_domain_randomizer(env_id)
