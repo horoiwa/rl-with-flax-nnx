@@ -1,5 +1,6 @@
 from pathlib import Path
 import shutil
+import functools
 import copy
 
 import wandb
@@ -39,7 +40,7 @@ CKPT_DIR = "checkpoints"
 SEED = 0
 
 
-def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
+def _create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
     env, env_cfg = registry.load(env_id), registry.get_default_config(env_id)
     obs_dim: int = env.observation_size["state"][0]
     priv_obs_dim: int = env.observation_size["privileged_state"][0]
@@ -53,6 +54,30 @@ def create_env(env_id: str, num_envs: int = 1, auto_reset: bool = False):
     else:
         reset_fn = jax.jit(jax.vmap(env.reset, in_axes=(0,)))
         step_fn = jax.jit(jax.vmap(env.step, in_axes=(0, 0)))
+
+    return env, env_cfg, obs_dim, priv_obs_dim, action_dim, reset_fn, step_fn
+
+
+def create_env(env_id: str, num_envs: int = 1):
+    env, env_cfg = registry.load(env_id), registry.get_default_config(env_id)
+    randomizer = registry.get_domain_randomizer(env_id)
+    obs_dim: int = env.observation_size["state"][0]
+    priv_obs_dim: int = env.observation_size["privileged_state"][0]
+    action_dim: int = env.action_size
+
+    if num_envs > 1:
+        # all devices gets the same randomization rng
+        keys = jax.random.split(jax.random.PRNGKey(42), num_envs)
+        v_randomization_fn = functools.partial(randomizer, rng=keys)
+        env = wrapper.wrap_for_brax_training(
+            env,
+            episode_length=1000,
+            action_repeat=1,
+            randomization_fn=v_randomization_fn,
+        )
+
+    reset_fn = jax.jit(env.reset)
+    step_fn = jax.jit(env.step)
 
     return env, env_cfg, obs_dim, priv_obs_dim, action_dim, reset_fn, step_fn
 
@@ -248,7 +273,7 @@ def train(env_id: str, log_dir: str):
     log_dir.mkdir(parents=True, exist_ok=True)
 
     (env, env_cfg, obs_dim, priv_obs_dim, action_dim, env_reset_fn, env_step_fn) = (
-        create_env(env_id, num_envs=NUM_ENVS, auto_reset=True)
+        create_env(env_id, num_envs=NUM_ENVS)
     )
     # ppo_config = locomotion_params.brax_ppo_config(env_id)
 
@@ -273,7 +298,7 @@ def train(env_id: str, log_dir: str):
     rng, *subkeys = jax.random.split(jax.random.PRNGKey(SEED), NUM_ENVS + 1)
     state = env_reset_fn(jnp.array(subkeys))
     trajectory, selected_actions = [state], []
-    for i in tqdm(range(1, 500_000_000 // NUM_ENVS)):
+    for i in tqdm(range(1, 200_000_000 // NUM_ENVS)):
         rng, subkey = jax.random.split(rng)
         action, raw_action, log_prob = policy_nn.sample_action(
             state.obs["state"], subkey
@@ -354,7 +379,7 @@ def train(env_id: str, log_dir: str):
                 env_id=env_id,
                 n_episodes=3,
                 log_dir=log_dir,
-                record_video=True if i % 100_000 == 0 else False,
+                record_video=True if i % 40_000 == 0 else False,
             )
             wandb.log(
                 {"episode_reward": test_score},
