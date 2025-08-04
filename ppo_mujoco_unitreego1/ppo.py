@@ -29,7 +29,7 @@ from mujoco_playground.config import locomotion_params
 NUM_ENVS = 1024
 BATCH_SIZE = 256
 UNROLL_LENGTH = 20
-NUM_UPDATE_PER_BATCH = 32
+NUM_UPDATE_PER_BATCH = 64
 
 DISCOUNT = 0.98
 GAE_LAMBDA = 0.95
@@ -392,6 +392,7 @@ def evaluate(
     n_episodes: int,
     log_dir: str,
     record_video: bool = True,
+    seed: int = 0,
 ):
 
     (env, env_cfg, obs_dim, _, action_dim, env_reset_fn, env_step_fn) = create_env(
@@ -411,10 +412,11 @@ def evaluate(
     policy_nn = nnx.merge(_graphdef, _state)
 
     scores = []
+    rng = jax.random.PRNGKey(seed)
     for n in range(n_episodes):
         # print(f"Evaluating episode {n + 1}/{n_episodes}...")
-        rng = jax.random.PRNGKey(n)
-        state = env_reset_fn(rng)
+        rng, key = jax.random.split(rng)
+        state = env_reset_fn(key)
         trajectory = [state]
         for _ in range(env_cfg.episode_length):
             rng, subkey = jax.random.split(rng)
@@ -464,9 +466,14 @@ def run_training(env_id: str, log_dir: str, use_wandb: bool):
 @cli.command(name="eval")
 @click.option("--env-id", default="Go1JoystickFlatTerrain", help="Environment ID")
 @click.option("--log-dir", default="log", help="Directory to save logs and videos")
-def run_evaluation(env_id: str, log_dir: str):
+@click.option("--seed", default=0, help="seed")
+def run_evaluation(env_id: str, log_dir: str, seed: int):
     evaluate(
-        env_id=env_id, log_dir=f"{log_dir}/{env_id}", n_episodes=5, record_video=True
+        env_id=env_id,
+        log_dir=f"{log_dir}/{env_id}",
+        n_episodes=5,
+        record_video=True,
+        seed=seed,
     )
 
 
