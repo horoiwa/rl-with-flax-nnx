@@ -21,8 +21,9 @@ from brax.training.agents.ppo import networks as ppo_networks
 
 # from brax import envs as brax_envs
 
-
+import mujoco
 from mujoco_playground import wrapper, registry
+from mujoco_playground._src.gait import draw_joystick_command
 from mujoco_playground.config import locomotion_params
 
 # Hyperparameters
@@ -31,7 +32,7 @@ BATCH_SIZE = 256
 UNROLL_LENGTH = 20
 NUM_UPDATE_PER_BATCH = 48
 
-DISCOUNT = 0.98
+DISCOUNT = 0.97
 GAE_LAMBDA = 0.95
 CLIP_EPS = 0.2
 ENTROPY_COEF = 0.01
@@ -264,7 +265,10 @@ def train(env_id: str, log_dir: str):
     policy_optimizer = nnx.Optimizer(
         policy_nn,
         optax.chain(
-            optax.clip_by_global_norm(MAX_GRAD_NORM), optax.adam(learning_rate=3e-4)
+            optax.clip_by_global_norm(MAX_GRAD_NORM),
+            # optax.adam(learning_rate=3e-4),
+            # NOTE EXPERIMENTAL
+            optax.adam(learning_rate=1e-4),
         ),
     )
 
@@ -272,7 +276,8 @@ def train(env_id: str, log_dir: str):
     value_optimizer = nnx.Optimizer(
         value_nn,
         optax.chain(
-            optax.clip_by_global_norm(MAX_GRAD_NORM), optax.adam(learning_rate=3e-4)
+            optax.clip_by_global_norm(MAX_GRAD_NORM),
+            optax.adam(learning_rate=3e-4),
         ),
     )
 
@@ -393,12 +398,12 @@ def evaluate(
     policy_nn = nnx.merge(_graphdef, _state)
 
     scores = []
+    modify_scene_fns = []
     rng = jax.random.PRNGKey(seed)
     for n in range(n_episodes):
-        # print(f"Evaluating episode {n + 1}/{n_episodes}...")
+        trajectory = []
         rng, key = jax.random.split(rng)
         state = env_reset_fn(key)
-        trajectory = [state]
         for _ in range(env_cfg.episode_length):
             rng, subkey = jax.random.split(rng)
             action, _, _ = policy_nn.sample_action(
@@ -406,6 +411,25 @@ def evaluate(
             )
             state = env_step_fn(state, action[0])
             trajectory.append(state)
+            if record_video:
+                print(
+                    np.round(state.info["command"], 2),
+                    f"{state.metrics['reward/tracking_lin_vel']:.3f}",
+                    f"{state.metrics['reward/tracking_ang_vel']:.3f}",
+                )
+                xyz = np.array(state.data.xpos[env._torso_body_id])
+                xyz += np.array([0, 0, 0.2])
+                x_axis = state.data.xmat[env._torso_body_id, 0]
+                yaw = -np.arctan2(x_axis[1], x_axis[0])
+                modify_scene_fns.append(
+                    functools.partial(
+                        draw_joystick_command,
+                        cmd=state.info["command"],
+                        xyz=xyz,  # 矢印の描画位置
+                        theta=yaw,
+                        scl=abs(state.info["command"][0]) / env_cfg.command_config.a[0],
+                    )
+                )
             if state.done:
                 break
 
@@ -415,8 +439,24 @@ def evaluate(
 
         if record_video:
             print("Saving video...")
-            frames: list[np.ndarray] = env.render(trajectory, camera="track")
-            imageio.mimsave(f"{log_dir}/eval_{n+1}.mp4", frames, fps=1 / env.dt)
+            scene_option = mujoco.MjvOption()
+            scene_option.geomgroup[2] = True
+            scene_option.geomgroup[3] = False
+            scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
+            scene_option.flags[mujoco.mjtVisFlag.mjVIS_TRANSPARENT] = False
+            scene_option.flags[mujoco.mjtVisFlag.mjVIS_PERTFORCE] = True
+
+            frames: list[np.ndarray] = env.render(
+                trajectory,
+                camera="track",
+                scene_option=scene_option,
+                modify_scene_fns=modify_scene_fns,
+            )
+            imageio.mimsave(
+                f"{log_dir}/eval_{n+1}.mp4",
+                frames,
+                fps=1 / env.dt,
+            )
 
     return np.mean(scores)
 
