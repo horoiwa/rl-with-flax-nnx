@@ -97,13 +97,35 @@ class SquashedGaussianPolicy(nnx.Module):
         )
         self.log_std = nnx.Param(jnp.zeros(action_dim))
 
+        self.stats_mean = nnx.Variable(jnp.zeros(obs_dim))
+        self.stats_var = nnx.Variable(jnp.ones(obs_dim))
+        self.stats_count = nnx.Variable(0)
+
     def __call__(self, x):
+        x = (x - self.running_mean) / self.running_var
         x = nnx.elu(self.dense_1(x))
         x = nnx.elu(self.dense_2(x))
         x = nnx.elu(self.dense_3(x))
         mu = self.mu(x)
         std = (nnx.softplus(self.log_std) + 0.01) * jnp.ones_like(mu)
         return mu, std
+
+    def update_running_stats(self, x):
+        """Updates running statistics for normalization."""
+        assert x.ndim == 2, "Input must be (batch_size, obs_dim)"
+        batch_mean = jnp.mean(x, axis=0)
+        batch_var = jnp.var(x, axis=0)
+        batch_count = x.shape[0]
+
+        new_count = self.stats_count + batch_count
+        delta = batch_mean - self.stats_mean
+
+        new_mean = self.stats_mean + delta * (batch_count / new_count)
+        new_var = (
+            self.stats_var * self.stats_count + batch_var * batch_count
+        ) / new_count + delta**2 * (self.stats_count * batch_count) / new_count
+
+        self.stats_mean, self.stats_var, self.stats_count = new_mean, new_var, new_count
 
     @nnx.jit
     def sample_action(self, obs, key: jax.random.PRNGKey):
@@ -195,7 +217,7 @@ def train_step(
     )
 
     def policy_loss_fn(policy_nn):
-        mu, std = policy_nn(batch_data["obs_policy"])
+        mu, std = policy_nn(batch_data["obs"])
         new_log_probs = policy_nn.log_prob(batch_data["raw_actions"], loc=mu, scale=std)
 
         ratio = jnp.exp(new_log_probs - batch_data["old_log_probs"])
@@ -211,7 +233,7 @@ def train_step(
         return loss
 
     def value_loss_fn(value_nn):
-        values = value_nn(batch_data["obs_value"])
+        values = value_nn(batch_data["obs_privileged"])
         value_loss = (values - batch_data["target_values"]) ** 2
         loss = jnp.mean(value_loss)
         return loss
@@ -308,10 +330,10 @@ def train(env_id: str, log_dir: str):
 
             B, T = NUM_ENVS, UNROLL_LENGTH
             batch_data = {
-                "obs_policy": jnp.stack(
+                "obs": jnp.stack(
                     [s.obs["state"] for s in trajectory[:-1]], axis=1
                 ).reshape(B * T, -1),
-                "obs_value": jnp.stack(
+                "obs_privileged": jnp.stack(
                     [s.obs["privileged_state"] for s in trajectory[:-1]], axis=1
                 ).reshape(B * T, -1),
                 "raw_actions": jnp.stack(
