@@ -30,7 +30,8 @@ from mujoco_playground.config import locomotion_params
 NUM_ENVS = 1024
 BATCH_SIZE = 256
 UNROLL_LENGTH = 20
-NUM_UPDATE_PER_BATCH = 48
+# NUM_UPDATE_PER_BATCH = 48
+NUM_UPDATE_PER_BATCH = 64
 
 DISCOUNT = 0.97
 GAE_LAMBDA = 0.95
@@ -289,7 +290,7 @@ def train(env_id: str, log_dir: str):
     rng, *subkeys = jax.random.split(jax.random.PRNGKey(SEED), NUM_ENVS + 1)
     state = env_reset_fn(jnp.array(subkeys))
     trajectory, selected_actions = [state], []
-    for i in tqdm(range(1, 200_000_00 // NUM_ENVS + 1)):
+    for i in tqdm(range(1, 1 + 200_000_000 // NUM_ENVS)):
         rng, subkey = jax.random.split(rng)
         action, raw_action, log_prob = policy_nn.sample_action(
             state.obs["state"], subkey
