@@ -104,7 +104,7 @@ class SquashedGaussianPolicy(nnx.Module):
         self.stats_var = nnx.Variable(jnp.ones(obs_dim))
 
     def __call__(self, obs):
-        x = (obs - self.stats_mean) / self.stats_var
+        x = (obs - self.stats_mean) / jnp.sqrt(self.stats_var)
         x = nnx.silu(self.dense_1(x))
         x = nnx.silu(self.dense_2(x))
         x = nnx.silu(self.dense_3(x))
