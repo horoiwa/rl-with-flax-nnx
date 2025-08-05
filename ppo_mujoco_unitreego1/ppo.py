@@ -97,35 +97,42 @@ class SquashedGaussianPolicy(nnx.Module):
         )
         self.log_std = nnx.Param(jnp.zeros(action_dim))
 
+        # Running statistics for obs normalization
         self.stats_mean = nnx.Variable(jnp.zeros(obs_dim))
-        self.stats_var = nnx.Variable(jnp.ones(obs_dim))
+        self.stats_m2 = nnx.Variable(jnp.zeros(obs_dim))
         self.stats_count = nnx.Variable(0)
+        self.stats_var = nnx.Variable(jnp.ones(obs_dim))
 
-    def __call__(self, x):
-        x = (x - self.running_mean) / self.running_var
-        x = nnx.elu(self.dense_1(x))
-        x = nnx.elu(self.dense_2(x))
-        x = nnx.elu(self.dense_3(x))
+    def __call__(self, obs):
+        x = (obs - self.stats_mean) / self.stats_var
+        x = nnx.silu(self.dense_1(x))
+        x = nnx.silu(self.dense_2(x))
+        x = nnx.silu(self.dense_3(x))
         mu = self.mu(x)
         std = (nnx.softplus(self.log_std) + 0.01) * jnp.ones_like(mu)
         return mu, std
 
     def update_running_stats(self, x):
-        """Updates running statistics for normalization."""
+        """Updates running statistics using Welford's algorithm"""
         assert x.ndim == 2, "Input must be (batch_size, obs_dim)"
         batch_mean = jnp.mean(x, axis=0)
-        batch_var = jnp.var(x, axis=0)
+        batch_m2 = jnp.var(x, axis=0) * x.shape[0]
         batch_count = x.shape[0]
 
         new_count = self.stats_count + batch_count
+
         delta = batch_mean - self.stats_mean
-
         new_mean = self.stats_mean + delta * (batch_count / new_count)
-        new_var = (
-            self.stats_var * self.stats_count + batch_var * batch_count
-        ) / new_count + delta**2 * (self.stats_count * batch_count) / new_count
 
-        self.stats_mean, self.stats_var, self.stats_count = new_mean, new_var, new_count
+        new_m2 = (
+            self.stats_m2
+            + batch_m2
+            + delta**2 * (self.stats_count * batch_count) / new_count
+        )
+        import pdb; pdb.set_trace()  # fmt: skip
+
+        self.stats_mean, self.stats_m2, self.stats_count = new_mean, new_m2, new_count
+        self.stats_var = self.stats_m2 / self.stats_count
 
     @nnx.jit
     def sample_action(self, obs, key: jax.random.PRNGKey):
@@ -195,9 +202,9 @@ class ValueNN(nnx.Module):
         )
 
     def __call__(self, x):
-        x = nnx.elu(self.dense_1(x))
-        x = nnx.elu(self.dense_2(x))
-        x = nnx.elu(self.dense_3(x))
+        x = nnx.silu(self.dense_1(x))
+        x = nnx.silu(self.dense_2(x))
+        x = nnx.silu(self.dense_3(x))
         out = self.out(x)
         return out
 
