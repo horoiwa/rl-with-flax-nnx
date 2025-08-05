@@ -10,7 +10,6 @@ from tqdm import tqdm
 
 import jax
 import jax.numpy as jnp
-import jax.scipy.stats
 import numpy as np
 from flax import nnx
 import optax
@@ -18,8 +17,6 @@ import orbax.checkpoint as ocp
 
 from brax.training.agents.ppo import train as brax_train
 from brax.training.agents.ppo import networks as ppo_networks
-
-# from brax import envs as brax_envs
 
 import mujoco
 from mujoco_playground import wrapper, registry
@@ -30,8 +27,8 @@ from mujoco_playground.config import locomotion_params
 NUM_ENVS = 1024
 BATCH_SIZE = 256
 UNROLL_LENGTH = 20
-# NUM_UPDATE_PER_BATCH = 48
-NUM_UPDATE_PER_BATCH = 64
+NUM_UPDATE_PER_BATCH = 48
+LEARNING_RATE = 1e-4
 
 DISCOUNT = 0.97
 GAE_LAMBDA = 0.95
@@ -44,10 +41,6 @@ SEED = 0
 
 def create_env(env_id: str, num_envs: int = 1):
     env_cfg = registry.get_default_config(env_id)
-
-    # NOTE EXPERIMENTAL
-    # env_cfg["reward_config"]["scales"]["tracking_lin_vel"] = 5.0
-
     env = registry.load(env_id, config=env_cfg)
     randomizer = registry.get_domain_randomizer(env_id)
     obs_dim: int = env.observation_size["state"][0]
@@ -55,7 +48,6 @@ def create_env(env_id: str, num_envs: int = 1):
     action_dim: int = env.action_size
 
     if num_envs > 1:
-        # all devices gets the same randomization rng
         keys = jax.random.split(jax.random.PRNGKey(42), num_envs)
         v_randomization_fn = functools.partial(randomizer, rng=keys)
         env = wrapper.wrap_for_brax_training(
@@ -272,9 +264,7 @@ def train(env_id: str, log_dir: str):
         policy_nn,
         optax.chain(
             optax.clip_by_global_norm(MAX_GRAD_NORM),
-            # optax.adam(learning_rate=3e-4),
-            # NOTE EXPERIMENTAL
-            optax.adam(learning_rate=5e-5),
+            optax.adam(learning_rate=LEARNING_RATE),
         ),
     )
 
@@ -290,7 +280,7 @@ def train(env_id: str, log_dir: str):
     rng, *subkeys = jax.random.split(jax.random.PRNGKey(SEED), NUM_ENVS + 1)
     state = env_reset_fn(jnp.array(subkeys))
     trajectory, selected_actions = [state], []
-    for i in tqdm(range(1, 1 + 200_000_000 // NUM_ENVS)):
+    for i in tqdm(range(1, 1 + 300_000_000 // NUM_ENVS)):
         rng, subkey = jax.random.split(rng)
         action, raw_action, log_prob = policy_nn.sample_action(
             state.obs["state"], subkey
@@ -384,7 +374,7 @@ def evaluate(
     n_episodes: int,
     log_dir: str,
     record_video: bool = True,
-    seed: int = 0,
+    seed: int = SEED,
 ):
 
     (env, env_cfg, obs_dim, _, action_dim, env_reset_fn, env_step_fn) = create_env(
@@ -404,10 +394,9 @@ def evaluate(
     policy_nn = nnx.merge(_graphdef, _state)
 
     scores = []
-    modify_scene_fns = []
     rng = jax.random.PRNGKey(seed)
     for n in range(n_episodes):
-        trajectory = []
+        trajectory, modify_scene_fns = [], []
         rng, key = jax.random.split(rng)
         state = env_reset_fn(key)
         for _ in range(env_cfg.episode_length):
@@ -502,12 +491,6 @@ def run_evaluation(env_id: str, log_dir: str, seed: int):
         record_video=True,
         seed=seed,
     )
-
-
-@cli.command(name="dev")
-def debug():
-    pass
-    import pdb; pdb.set_trace()  # fmt: skip
 
 
 if __name__ == "__main__":
