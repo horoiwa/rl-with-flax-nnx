@@ -17,6 +17,7 @@ import orbax.checkpoint as ocp
 
 from brax.training.agents.ppo import train as brax_train
 from brax.training.agents.ppo import networks as ppo_networks
+from brax.training.acme import running_statistics
 
 import mujoco
 from mujoco_playground import wrapper, registry
@@ -24,6 +25,7 @@ from mujoco_playground._src.gait import draw_joystick_command
 from mujoco_playground.config import locomotion_params
 
 # Hyperparameters
+TIME_STEPS = 300_000_000
 NUM_ENVS = 1024
 BATCH_SIZE = 256
 UNROLL_LENGTH = 20
@@ -280,7 +282,7 @@ def train(env_id: str, log_dir: str):
     rng, *subkeys = jax.random.split(jax.random.PRNGKey(SEED), NUM_ENVS + 1)
     state = env_reset_fn(jnp.array(subkeys))
     trajectory, selected_actions = [state], []
-    for i in tqdm(range(1, 1 + 300_000_000 // NUM_ENVS)):
+    for i in tqdm(range(1, 1 + TIME_STEPS // NUM_ENVS)):
         rng, subkey = jax.random.split(rng)
         action, raw_action, log_prob = policy_nn.sample_action(
             state.obs["state"], subkey
@@ -402,16 +404,16 @@ def evaluate(
         for _ in range(env_cfg.episode_length):
             rng, subkey = jax.random.split(rng)
             action, _, _ = policy_nn.sample_action(
-                state.obs["state"].reshape(1, -1), subkey
+                obs=state.obs["state"].reshape(1, -1), key=subkey
             )
             state = env_step_fn(state, action[0])
             trajectory.append(state)
             if record_video:
-                print(
-                    np.round(state.info["command"], 2),
-                    f"{state.metrics['reward/tracking_lin_vel']:.3f}",
-                    f"{state.metrics['reward/tracking_ang_vel']:.3f}",
-                )
+                # print(
+                #     np.round(state.info["command"], 2),
+                #     f"{state.metrics['reward/tracking_lin_vel']:.3f}",
+                #     f"{state.metrics['reward/tracking_ang_vel']:.3f}",
+                # )
                 xyz = np.array(state.data.xpos[env._torso_body_id])
                 xyz += np.array([0, 0, 0.2])
                 x_axis = state.data.xmat[env._torso_body_id, 0]
