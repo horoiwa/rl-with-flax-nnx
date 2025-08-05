@@ -15,14 +15,14 @@ from flax import nnx
 import optax
 import orbax.checkpoint as ocp
 
-from brax.training.agents.ppo import train as brax_train
-from brax.training.agents.ppo import networks as ppo_networks
-from brax.training.acme import running_statistics
+# from brax.training.agents.ppo import train as brax_train
+# from brax.training.agents.ppo import networks as ppo_networks
+# from brax.training.acme import running_statistics
 
 import mujoco
 from mujoco_playground import wrapper, registry
 from mujoco_playground._src.gait import draw_joystick_command
-from mujoco_playground.config import locomotion_params
+
 
 # Hyperparameters
 TIME_STEPS = 300_000_000
@@ -92,7 +92,7 @@ class SquashedGaussianPolicy(nnx.Module):
         self.mu = nnx.Linear(
             in_features=128,
             out_features=action_dim,
-            kernel_init=nnx.initializers.orthogonal(),
+            kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.log_std = nnx.Param(jnp.zeros(action_dim))
@@ -197,7 +197,7 @@ class ValueNN(nnx.Module):
         self.out = nnx.Linear(
             in_features=128,
             out_features=1,
-            kernel_init=nnx.initializers.orthogonal(),
+            kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
 
