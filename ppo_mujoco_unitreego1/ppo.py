@@ -76,7 +76,7 @@ class RunningStats(nnx.Module):
     def std(self):
         return jnp.where(
             jnp.bool(self.count),
-            jnp.sqrt(self.m2 / self.count),
+            jnp.sqrt(self.m2 / self.count) + 1e-8,
             jnp.ones_like(self.mean),
         )
 
@@ -131,7 +131,7 @@ class SquashedGaussianPolicy(nnx.Module):
         )
         self.log_std = nnx.Param(jnp.zeros(action_dim))
 
-        self.running_stats = RunningStats(dim=obs_dim)
+        self.running_stats = RunningStats(in_features=obs_dim)
 
     def __call__(self, obs, debug=False):
         x = (obs - self.running_stats.mean) / self.running_stats.std
@@ -208,10 +208,11 @@ class ValueNN(nnx.Module):
             kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
-        self.running_stats = RunningStats(dim=obs_dim)
+        self.running_stats = RunningStats(in_features=obs_dim)
 
     def __call__(self, obs):
-        x = (obs - self.running_stats.mean) / self.running_stats.std
+        # x = (obs - self.running_stats.mean) / self.running_stats.std
+        x = obs
         x = nnx.silu(self.dense_1(x))
         x = nnx.silu(self.dense_2(x))
         x = nnx.silu(self.dense_3(x))
@@ -380,7 +381,7 @@ def train(env_id: str, log_dir: str):
 
             # Update running mean and variance of observations
             policy_nn.running_stats.update(batch_data["obs"])
-            value_nn.running_stats.update(batch_data["obs_privileged"])
+            # value_nn.running_stats.update(batch_data["obs_privileged"])
 
             wandb.log(
                 {
