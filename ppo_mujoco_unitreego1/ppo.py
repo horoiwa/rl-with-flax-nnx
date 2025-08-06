@@ -65,6 +65,39 @@ def create_env(env_id: str, num_envs: int = 1):
     return env, env_cfg, obs_dim, priv_obs_dim, action_dim, reset_fn, step_fn
 
 
+class RunningStats(nnx.Module):
+    def __init__(self, dim: int):
+        self.mean = nnx.Variable(jnp.zeros(dim))
+        self.m2 = nnx.Variable(jnp.zeros(dim))
+        self.count = nnx.Variable(0)
+
+    @property
+    def std(self):
+        return jnp.sqrt(self.m2 / self.count)
+
+    def update(self, x):
+        """Updates running statistics using Welford's algorithm"""
+        assert x.ndim == 2, "Input must be (batch_size, obs_dim)"
+        batch_mean = jnp.mean(x, axis=0)
+        batch_m2 = jnp.var(x, axis=0) * x.shape[0]
+        batch_count = x.shape[0]
+
+        new_count = self.stats_count + batch_count
+
+        delta = batch_mean - self.stats_mean
+        new_mean = self.stats_mean + delta * (batch_count / new_count)
+
+        new_m2 = (
+            self.stats_m2
+            + batch_m2
+            + delta**2 * (self.stats_count * batch_count) / new_count
+        )
+
+        self.stats_mean.value = new_mean
+        self.stats_m2.value = new_m2
+        self.stats_count.value = new_count
+
+
 class SquashedGaussianPolicy(nnx.Module):
     def __init__(self, obs_dim, action_dim: int, rngs: nnx.Rngs):
 
@@ -97,43 +130,17 @@ class SquashedGaussianPolicy(nnx.Module):
         )
         self.log_std = nnx.Param(jnp.zeros(action_dim))
 
-        # Running statistics for obs normalization
-        self.stats_mean = nnx.Variable(jnp.zeros(obs_dim))
-        self.stats_m2 = nnx.Variable(jnp.zeros(obs_dim))
-        self.stats_count = nnx.Variable(0)
-        self.stats_var = nnx.Variable(jnp.ones(obs_dim))
+        self.running_stats = RunningStats(dim=obs_dim)
 
+    @property
     def __call__(self, obs):
-        x = (obs - self.stats_mean) / jnp.sqrt(self.stats_var)
+        x = (obs - self.running_stats.mean) / self.running_stats.std
         x = nnx.silu(self.dense_1(x))
         x = nnx.silu(self.dense_2(x))
         x = nnx.silu(self.dense_3(x))
         mu = self.mu(x)
         std = (nnx.softplus(self.log_std) + 0.01) * jnp.ones_like(mu)
         return mu, std
-
-    def update_running_stats(self, x):
-        """Updates running statistics using Welford's algorithm"""
-        assert x.ndim == 2, "Input must be (batch_size, obs_dim)"
-        batch_mean = jnp.mean(x, axis=0)
-        batch_m2 = jnp.var(x, axis=0) * x.shape[0]
-        batch_count = x.shape[0]
-
-        new_count = self.stats_count + batch_count
-
-        delta = batch_mean - self.stats_mean
-        new_mean = self.stats_mean + delta * (batch_count / new_count)
-
-        new_m2 = (
-            self.stats_m2
-            + batch_m2
-            + delta**2 * (self.stats_count * batch_count) / new_count
-        )
-
-        self.stats_mean.value = new_mean
-        self.stats_m2.value = new_m2
-        self.stats_count.value = new_count
-        self.stats_var.value = self.stats_m2 / self.stats_count
 
     @nnx.jit
     def sample_action(self, obs, key: jax.random.PRNGKey):
@@ -201,8 +208,11 @@ class ValueNN(nnx.Module):
             kernel_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
+        self.running_stats = RunningStats(dim=obs_dim)
 
-    def __call__(self, x):
+    @property
+    def __call__(self, obs):
+        x = (obs - self.running_stats.mean) / self.running_stats.std
         x = nnx.silu(self.dense_1(x))
         x = nnx.silu(self.dense_2(x))
         x = nnx.silu(self.dense_3(x))
@@ -354,9 +364,6 @@ def train(env_id: str, log_dir: str):
                 "target_values": target_values.reshape(B * T, 1),
             }
 
-            # Update running mean and variance of observations
-            policy_nn.update_running_stats(batch_data["obs"].reshape(B * T, -1))
-
             # Update networks
             for _ in range(NUM_UPDATE_PER_BATCH):
                 rng, subkey1, subkey2 = jax.random.split(rng, 3)
@@ -371,15 +378,21 @@ def train(env_id: str, log_dir: str):
                     value_optimizer=value_optimizer,
                     key=subkey2,
                 )
-            else:
-                wandb.log(
-                    {
-                        "ploss": ploss,
-                        "vloss": vloss,
-                        "reward": rewards.sum(axis=-1).mean(),
-                    },
-                    step=i * NUM_ENVS,
-                )
+
+            # Update running mean and variance of observations
+            policy_nn.running_stats.update(x=batch_data["obs"].reshape(B * T, -1))
+            value_nn.running_stats.update(
+                x=batch_data["obs_privileged"].reshape(B * T, -1)
+            )
+
+            wandb.log(
+                {
+                    "ploss": ploss,
+                    "vloss": vloss,
+                    "reward": rewards.sum(axis=-1).mean(),
+                },
+                step=i * NUM_ENVS,
+            )
 
             trajectory = trajectory[-1:]  # Keep the last state for the next rollout
             selected_actions = []  # Reset actions for the next rollout
