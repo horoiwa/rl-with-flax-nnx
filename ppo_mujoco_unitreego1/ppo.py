@@ -129,10 +129,11 @@ class SquashedGaussianPolicy(nnx.Module):
             + batch_m2
             + delta**2 * (self.stats_count * batch_count) / new_count
         )
-        import pdb; pdb.set_trace()  # fmt: skip
 
-        self.stats_mean, self.stats_m2, self.stats_count = new_mean, new_m2, new_count
-        self.stats_var = self.stats_m2 / self.stats_count
+        self.stats_mean.value = new_mean
+        self.stats_m2.value = new_m2
+        self.stats_count.value = new_count
+        self.stats_var.value = self.stats_m2 / self.stats_count
 
     @nnx.jit
     def sample_action(self, obs, key: jax.random.PRNGKey):
@@ -352,6 +353,9 @@ def train(env_id: str, log_dir: str):
                 "advantages": advantages.reshape(B * T, 1),
                 "target_values": target_values.reshape(B * T, 1),
             }
+
+            # Update running mean and variance of observations
+            policy_nn.update_running_stats(batch_data["obs"].reshape(B * T, -1))
 
             # Update networks
             for _ in range(NUM_UPDATE_PER_BATCH):
