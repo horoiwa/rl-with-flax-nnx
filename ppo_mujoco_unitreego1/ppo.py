@@ -84,14 +84,11 @@ class RunningStats(nnx.Module):
         """Updates running statistics using Welford's algorithm"""
         x = x.reshape(-1, self.in_features)
         batch_mean = jnp.mean(x, axis=0)
-        batch_m2 = jnp.var(x, axis=0) * x.shape[0]
         batch_count = x.shape[0]
-
-        new_count = self.count + batch_count
-
+        batch_m2 = jnp.var(x, axis=0) * batch_count
         delta = batch_mean - self.mean
+        new_count = self.count + batch_count
         new_mean = self.mean + delta * (batch_count / new_count)
-
         new_m2 = self.m2 + batch_m2 + delta**2 * (self.count * batch_count) / new_count
 
         self.mean.value = new_mean
@@ -211,8 +208,7 @@ class ValueNN(nnx.Module):
         self.running_stats = RunningStats(in_features=obs_dim)
 
     def __call__(self, obs):
-        # x = (obs - self.running_stats.mean) / self.running_stats.std
-        x = obs
+        x = (obs - self.running_stats.mean) / self.running_stats.std
         x = nnx.silu(self.dense_1(x))
         x = nnx.silu(self.dense_2(x))
         x = nnx.silu(self.dense_3(x))
@@ -381,7 +377,7 @@ def train(env_id: str, log_dir: str):
 
             # Update running mean and variance of observations
             policy_nn.running_stats.update(batch_data["obs"])
-            # value_nn.running_stats.update(batch_data["obs_privileged"])
+            value_nn.running_stats.update(batch_data["obs_privileged"])
 
             wandb.log(
                 {

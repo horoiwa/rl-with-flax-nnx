@@ -17,6 +17,8 @@
 
 (Learning to walk in minutes using massively parallel deep reinforcement learning)[https://arxiv.org/abs/2109.11978]
 
+(mujoco_menagerie
+/unitree_go1)[https://github.com/google-deepmind/mujoco_menagerie/tree/main/unitree_go1]
 
 (Pdb) ppo_params
 action_repeat: 1
