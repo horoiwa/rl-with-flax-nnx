@@ -66,18 +66,23 @@ def create_env(env_id: str, num_envs: int = 1):
 
 
 class RunningStats(nnx.Module):
-    def __init__(self, dim: int):
-        self.mean = nnx.Variable(jnp.zeros(dim))
-        self.m2 = nnx.Variable(jnp.zeros(dim))
+    def __init__(self, in_features: int):
+        self.in_features: int = in_features
+        self.mean = nnx.Variable(jnp.zeros(self.in_features, dtype=jnp.float32))
+        self.m2 = nnx.Variable(jnp.zeros(self.in_features, dtype=jnp.float32))
         self.count = nnx.Variable(0)
 
     @property
     def std(self):
-        return jnp.sqrt(self.m2 / self.count)
+        return jnp.where(
+            jnp.bool(self.count),
+            jnp.sqrt(self.m2 / self.count),
+            jnp.ones_like(self.mean),
+        )
 
     def update(self, x):
         """Updates running statistics using Welford's algorithm"""
-        assert x.ndim == 2, "Input must be (batch_size, obs_dim)"
+        x = x.reshape(-1, self.in_features)
         batch_mean = jnp.mean(x, axis=0)
         batch_m2 = jnp.var(x, axis=0) * x.shape[0]
         batch_count = x.shape[0]
@@ -128,7 +133,7 @@ class SquashedGaussianPolicy(nnx.Module):
 
         self.running_stats = RunningStats(dim=obs_dim)
 
-    def __call__(self, obs):
+    def __call__(self, obs, debug=False):
         x = (obs - self.running_stats.mean) / self.running_stats.std
         x = nnx.silu(self.dense_1(x))
         x = nnx.silu(self.dense_2(x))
@@ -374,10 +379,8 @@ def train(env_id: str, log_dir: str):
                 )
 
             # Update running mean and variance of observations
-            policy_nn.running_stats.update(x=batch_data["obs"].reshape(B * T, -1))
-            value_nn.running_stats.update(
-                x=batch_data["obs_privileged"].reshape(B * T, -1)
-            )
+            policy_nn.running_stats.update(batch_data["obs"])
+            value_nn.running_stats.update(batch_data["obs_privileged"])
 
             wandb.log(
                 {
