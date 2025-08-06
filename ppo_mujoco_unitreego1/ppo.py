@@ -82,20 +82,16 @@ class RunningStats(nnx.Module):
         batch_m2 = jnp.var(x, axis=0) * x.shape[0]
         batch_count = x.shape[0]
 
-        new_count = self.stats_count + batch_count
+        new_count = self.count + batch_count
 
-        delta = batch_mean - self.stats_mean
-        new_mean = self.stats_mean + delta * (batch_count / new_count)
+        delta = batch_mean - self.mean
+        new_mean = self.mean + delta * (batch_count / new_count)
 
-        new_m2 = (
-            self.stats_m2
-            + batch_m2
-            + delta**2 * (self.stats_count * batch_count) / new_count
-        )
+        new_m2 = self.m2 + batch_m2 + delta**2 * (self.count * batch_count) / new_count
 
-        self.stats_mean.value = new_mean
-        self.stats_m2.value = new_m2
-        self.stats_count.value = new_count
+        self.mean.value = new_mean
+        self.m2.value = new_m2
+        self.count.value = new_count
 
 
 class SquashedGaussianPolicy(nnx.Module):
@@ -132,7 +128,6 @@ class SquashedGaussianPolicy(nnx.Module):
 
         self.running_stats = RunningStats(dim=obs_dim)
 
-    @property
     def __call__(self, obs):
         x = (obs - self.running_stats.mean) / self.running_stats.std
         x = nnx.silu(self.dense_1(x))
@@ -210,7 +205,6 @@ class ValueNN(nnx.Module):
         )
         self.running_stats = RunningStats(dim=obs_dim)
 
-    @property
     def __call__(self, obs):
         x = (obs - self.running_stats.mean) / self.running_stats.std
         x = nnx.silu(self.dense_1(x))
