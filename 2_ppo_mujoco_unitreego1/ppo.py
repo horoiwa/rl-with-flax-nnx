@@ -1,7 +1,6 @@
 from pathlib import Path
 import shutil
 import functools
-import copy
 
 import wandb
 
@@ -14,10 +13,6 @@ import numpy as np
 from flax import nnx
 import optax
 import orbax.checkpoint as ocp
-
-# from brax.training.agents.ppo import train as brax_train
-# from brax.training.agents.ppo import networks as ppo_networks
-# from brax.training.acme import running_statistics
 
 import mujoco
 from mujoco_playground import wrapper, registry
