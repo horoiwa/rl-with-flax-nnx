@@ -7,6 +7,8 @@ CLAUDE.md
 .claude/
 wandb/
 log/
+IsaacLab/
+tmp/
 
 # C extensions
 *.so
