@@ -443,11 +443,6 @@ def evaluate(
             state = env_step_fn(state, action[0])
             trajectory.append(state)
             if record_video:
-                # print(
-                #     np.round(state.info["command"], 2),
-                #     f"{state.metrics['reward/tracking_lin_vel']:.3f}",
-                #     f"{state.metrics['reward/tracking_ang_vel']:.3f}",
-                # )
                 xyz = np.array(state.data.xpos[env._torso_body_id])
                 xyz += np.array([0, 0, 0.2])
                 x_axis = state.data.xmat[env._torso_body_id, 0]
