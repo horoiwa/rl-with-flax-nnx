@@ -26,10 +26,10 @@ from mujoco_playground._src.gait import draw_joystick_command
 
 # Hyperparameters
 TIME_STEPS = 200_000_000
-NUM_ENVS = 1024
+NUM_ENVS = 4096
 BATCH_SIZE = 256
 UNROLL_LENGTH = 20
-NUM_UPDATE_PER_BATCH = 96
+NUM_UPDATE_PER_BATCH = 320
 
 DISCOUNT = 0.97
 GAE_LAMBDA = 0.95
@@ -390,7 +390,7 @@ def train(env_id: str, log_dir: str):
             trajectory = trajectory[-1:]  # Keep the last state for the next rollout
             selected_actions = []  # Reset actions for the next rollout
 
-        if i % 10_000 == 0:
+        if i % 4000 == 0:
             # Save the model checkpoint
             checkpointer = ocp.StandardCheckpointer()
             ckpt_dir: Path = Path(log_dir / CKPT_DIR).resolve()
