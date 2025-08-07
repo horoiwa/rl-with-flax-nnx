@@ -25,12 +25,11 @@ from mujoco_playground._src.gait import draw_joystick_command
 
 
 # Hyperparameters
-TIME_STEPS = 300_000_000
+TIME_STEPS = 200_000_000
 NUM_ENVS = 1024
 BATCH_SIZE = 256
 UNROLL_LENGTH = 20
-NUM_UPDATE_PER_BATCH = 48
-LEARNING_RATE = 1e-4
+NUM_UPDATE_PER_BATCH = 96
 
 DISCOUNT = 0.97
 GAE_LAMBDA = 0.95
@@ -302,7 +301,7 @@ def train(env_id: str, log_dir: str):
         policy_nn,
         optax.chain(
             optax.clip_by_global_norm(MAX_GRAD_NORM),
-            optax.adam(learning_rate=LEARNING_RATE),
+            optax.adam(learning_rate=1e-4),
         ),
     )
 
@@ -403,7 +402,7 @@ def train(env_id: str, log_dir: str):
                 env_id=env_id,
                 n_episodes=5,
                 log_dir=log_dir,
-                record_video=True if i % 40_000 == 0 else False,
+                record_video=True,
             )
             wandb.log(
                 {"episode_reward": test_score},
