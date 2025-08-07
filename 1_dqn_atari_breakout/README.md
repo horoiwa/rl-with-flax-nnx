@@ -1,4 +1,4 @@
-# DQN for Atari/Breakout
+# DQN - Atari/Breakout
 
 
 ```bash

@@ -1,4 +1,4 @@
-# PPO for MJX/UnitreeGo1
+# PPO - MJX/UnitreeGo1
 
 `uv run python ppo.py train --use-wandb`
 
