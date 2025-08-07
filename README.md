@@ -1,47 +1,26 @@
 # Reinforcement-learning-with-flax-nnx
 
-これはFlax NNXによる代表的な深層強化学習アルゴリズムのシンプルな実装集です。
+
+Simple implementations of popular deep reinforcement learning algorithms in [Flax NNX](https://flax.readthedocs.io/en/v0.8.3/experimental/nnx/index.html)
 
 
-## アルゴリズム
+## 1. DQN - Atari/Breakout
 
-```凡例
-### アルゴリズム名
-[論文へのリンク](URL)
+[Human-level control through deep reinforcement learning](https://web.stanford.edu/class/psych209/Readings/MnihEtAlHassibis15NatureControlDeepRL.pdf)
 
-[Description]
-手法の簡単な説明(300字程度)
-
-[Environment]
-検証環境（ALE/Breakout or Mujoko/ant）
-
-[Training Script]
-
-検証スクリプトの実行コマンド: `train.sh --algo {dqn/a2c/ppo} --eng breakout`
-
-実装における留意事項（環境や訓練ステップ数、実行時間など）
-
-[Result]
-
-スコアの遷移（画像）
-
-訓練完了時の動き（gif)
-```
+https://github.com/user-attachments/assets/c8bc91dd-3d23-49cd-b373-b8cc99fcb4eb
 
 
-### DQN (Atari/Breakout)
+## 2. PPO - Mujoco/UnitreeGo1
 
+[Proximal Policy Optimization Algorithms](https://arxiv.org/abs/1707.06347)
 
-### PPO (IssacLab/UnitreeGo1)
+https://github.com/user-attachments/assets/d5586d28-2400-461f-8fcd-43f64b171d11
+
+## 3. GRPO - ReasoningGym/Gemma2B
+
+WIP
 
 
 
-
-## References
-
-[Flax NNX](https://flax.readthedocs.io/en/v0.8.3/experimental/nnx/index.html)
-
-[Gymnasium](https://gymnasium.farama.org/)
-
-[ALE](https://ale.farama.org/)
 

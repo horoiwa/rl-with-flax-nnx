@@ -3,16 +3,80 @@ from collections import deque
 from pathlib import Path
 import shutil
 import pickle
+from typing import Optional
+
+import ale_py
+import gymnasium as gym
+from gymnasium.wrappers import (
+    AtariPreprocessing,
+    TimeLimit,
+    FrameStackObservation,
+    RecordVideo,
+)
+import numpy as np
 
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 import optax
 import orbax.checkpoint as ocp
-import wandb
 import lz4.frame as lz4f
+import wandb
 
-from src import utils
+
+class ChannelLastFrameStack(FrameStackObservation):
+    """Frame stacking wrapper that outputs in channel-last format (H, W, C)."""
+
+    def reset(self, **kwargs):
+        obs, info = super().reset(**kwargs)
+        # Convert from (stack_size, H, W) to (H, W, stack_size)
+        obs = np.transpose(obs, (1, 2, 0))
+        return obs, info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = super().step(action)
+        # Convert from (stack_size, H, W) to (H, W, stack_size)
+        obs = np.transpose(obs, (1, 2, 0))
+        return obs, reward, terminated, truncated, info
+
+
+def get_atari_env(
+    env_id: str,
+    render_mode: str = "rgb_array",
+    record_folder: Optional[Path] = None,
+    record_frequency: int = 50,
+) -> gym.Env:
+    """Create and return an Atari environment with preprocessing."""
+    env = gym.make(
+        env_id,
+        render_mode=render_mode,
+        frameskip=1,
+        repeat_action_probability=0.0,
+    )
+    if record_folder is not None:
+        env = RecordVideo(
+            env=env,
+            video_folder=record_folder,
+            episode_trigger=lambda x: x % record_frequency == 0,
+        )
+    env = TimeLimit(
+        ChannelLastFrameStack(
+            AtariPreprocessing(
+                env=env,
+                noop_max=10,
+                frame_skip=4,
+                terminal_on_life_loss=False,
+                screen_size=84,
+                grayscale_obs=True,
+                grayscale_newaxis=False,
+                scale_obs=True,
+            ),
+            stack_size=4,
+        ),
+        max_episode_steps=2000,
+    )
+
+    return env
 
 
 class DQNCNN(nnx.Module):
@@ -113,9 +177,7 @@ def main(env_id: str, outdir: str):
         shutil.rmtree(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    env = utils.get_atari_env(
-        env_id, record_folder=outdir / "mp4", record_frequency=100
-    )
+    env = get_atari_env(env_id, record_folder=outdir / "mp4", record_frequency=100)
     action_dim: int = int(env.action_space.n)
 
     online_network = DQNCNN(action_dim, rngs=nnx.Rngs(0))
@@ -169,14 +231,6 @@ def main(env_id: str, outdir: str):
                 _graphdef, _state = nnx.split(online_network)
                 checkpointer.save(ckpt_dir, _state)
 
-                # FYI: Restore from ckpt
-                # abstract_model = nnx.eval_shape(
-                #     lambda: DQNCNN(action_dim, rngs=nnx.Rngs(0))
-                # )
-                # _graphdef, _abstract_state = nnx.split(abstract_model)
-                # _state_restored = checkpointer.restore(ckpt_dir, _abstract_state)
-                # network_restored = nnx.merge(_graphdef, _state_restored)
-
             state = next_state
             ep_rewards += reward
             ep_steps += 1
@@ -198,9 +252,26 @@ def main(env_id: str, outdir: str):
     env.close()
 
 
-if __name__ == "__main__":
+import click
+
+
+@click.group()
+def cli():
+    pass
+
+
+@cli.command(name="train")
+@click.option("--use-wandb", is_flag=True, help="Enable wandb (default: disable)")
+def run_dqn(use_wandb: bool):
     try:
-        wandb.init(project="dqn", mode="disabled")
+        wandb.init(
+            project="dqn",
+            mode="online" if use_wandb else "disabled",
+        )
         main(env_id="Breakout-v4", outdir="log")
     finally:
         wandb.finish()
+
+
+if __name__ == "__main__":
+    cli()
