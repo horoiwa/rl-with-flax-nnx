@@ -443,11 +443,6 @@ def evaluate(
             state = env_step_fn(state, action[0])
             trajectory.append(state)
             if record_video:
-                # print(
-                #     np.round(state.info["command"], 2),
-                #     f"{state.metrics['reward/tracking_lin_vel']:.3f}",
-                #     f"{state.metrics['reward/tracking_ang_vel']:.3f}",
-                # )
                 xyz = np.array(state.data.xpos[env._torso_body_id])
                 xyz += np.array([0, 0, 0.2])
                 x_axis = state.data.xmat[env._torso_body_id, 0]
@@ -470,17 +465,11 @@ def evaluate(
 
         if record_video:
             print("Saving video...")
-            scene_option = mujoco.MjvOption()
-            scene_option.geomgroup[2] = True
-            scene_option.geomgroup[3] = False
-            scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
-            scene_option.flags[mujoco.mjtVisFlag.mjVIS_TRANSPARENT] = False
-            scene_option.flags[mujoco.mjtVisFlag.mjVIS_PERTFORCE] = True
-
             frames: list[np.ndarray] = env.render(
                 trajectory,
                 camera="track",
-                scene_option=scene_option,
+                height=240 * 3,
+                width=380 * 3,
                 modify_scene_fns=modify_scene_fns,
             )
             imageio.mimsave(
