@@ -2,9 +2,18 @@ from pathlib import Path
 import click
 import wandb
 
+HOME = Path(__file__).parent
+CACHE_DIR = HOME / "__cache__"
+MODEL_NAME = "gemma_3_1B_it"
+
+
+def load_model():
+    if not CACHE_DIR.exists():
+        CACHE_DIR.mkdir(parents=True)
+
 
 def train(env_id: str, log_dir: str):
-    pass
+    model = load_model()
 
 
 def evaluate(env_id: str, log_dir: str, n_episodes: int, record_video: bool, seed: int):
