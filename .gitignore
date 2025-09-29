@@ -9,6 +9,7 @@ wandb/
 log/
 IsaacLab/
 tmp/
+__cache__/
 
 # C extensions
 *.so
