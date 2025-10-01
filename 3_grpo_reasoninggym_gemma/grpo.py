@@ -13,7 +13,7 @@ import sentencepiece as spm
 HOME = Path(__file__).parent
 CACHE_DIR = HOME / "__cache__"
 VARIANT_NAME = "gemma3-1b-it"
-MODEL_PATH = "google/gemma-3/Flax/" + VARIANT_NAME
+MODEL_PATH = "google/gemma-3/Flax/" + VARIANT_NAME + "/1"
 
 
 def load_model():
@@ -42,16 +42,17 @@ def load_model():
         print("You also need to agree to the Gemma3 model license on KaggleHub first:")
         kagglehub.login()
         os.environ["KAGGLEHUB_CACHE"] = str(CACHE_DIR.resolve())
-        weights_dir: str = kagglehub.model_download(str(MODEL_PATH))
+        kagglehub.model_download(str(MODEL_PATH))
 
-    ckpt_path: str = os.path.join(weights_dir, VARIANT_NAME)
-    params = params_lib.load_and_format_params(ckpt_path)
+    weights_dir = CACHE_DIR / "models" / MODEL_PATH
+    ckpt_path: Path = weights_dir / VARIANT_NAME
+    params = params_lib.load_and_format_params(str(ckpt_path))
     transformer = transformer_lib.Transformer.from_params(params)
     nnx.display(transformer)
 
-    vocab_path: str = os.path.join(weights_dir, "tokenizer.model")
+    vocab_path: Path = weights_dir / "tokenizer.model"
     vocab = spm.SentencePieceProcessor()
-    vocab.Load(vocab_path)
+    vocab.Load(str(vocab_path))
 
     sampler = sampler_lib.Sampler(
         transformer=transformer,
