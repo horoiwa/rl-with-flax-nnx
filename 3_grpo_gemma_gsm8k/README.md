@@ -28,3 +28,5 @@ https://flax.readthedocs.io/en/latest/examples/gemma.html に従ってkaggleア�
 
 モデル一覧（Gemma3)
 https://www.kaggle.com/models/google/gemma-3
+
+

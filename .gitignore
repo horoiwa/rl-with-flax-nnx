@@ -10,7 +10,7 @@ log/
 IsaacLab/
 tmp/
 __cache__/
-
+__checkpoints__/
 # C extensions
 *.so
 

@@ -1,6 +1,8 @@
 import sys
 import subprocess
 import os
+import csv
+import re
 
 from pathlib import Path
 import click
@@ -8,12 +10,110 @@ import wandb
 import kagglehub
 
 from flax import nnx
+import grain
 import sentencepiece as spm
+import optax
+from orbax import checkpoint as ocp
 
+# ==============================================================================
+# Path settings
+# ==============================================================================
 HOME = Path(__file__).parent
 CACHE_DIR = HOME / "__cache__"
+GSM8K_DATASET = "thedevastator/grade-school-math-8k-q-a"
 VARIANT_NAME = "gemma3-1b-it"
 MODEL_PATH = "google/gemma-3/Flax/" + VARIANT_NAME + "/1"
+CKPT_DIR = HOME / "__checkpoints__"
+os.environ["KAGGLEHUB_CACHE"] = str(CACHE_DIR.resolve())
+
+# ==============================================================================
+# Answer format settings
+# ==============================================================================
+REASONING_START = "<reasoning_start>"
+REASONING_END = "<reasoning_end>"
+SOLUTION_START = "<solution_start>"
+SOLUTION_END = "<solution_end>"
+SYSTEM_PROMPT = f"""You are given a problem. Think about the problem and \
+provide your reasoning. Place it between {REASONING_START} and \
+{REASONING_END}. Then, provide the final answer (i.e., just one numerical \
+value) between {SOLUTION_START} and {SOLUTION_END}."""
+TEMPLATE = """user
+{system_prompt}
+
+{question}
+model"""
+MATCH_FORMAT = re.compile(
+    rf"^[\s]{{0,}}"
+    rf"{REASONING_START}.+?{REASONING_END}.*?"
+    rf"{SOLUTION_START}(.+?){SOLUTION_END}"
+    rf"[\s]{{0,}}$",
+    flags=re.MULTILINE | re.DOTALL,
+)
+
+# ==============================================================================
+# Training parameters
+# ==============================================================================
+N_EPOCHS = 1
+TRAIN_BATCH_SIZE = 1
+VALID_BATCH_SIZE = 1
+TEST_BATCH_SIZE = 1
+
+
+def load_dataset():
+
+    def dataset_from_csv_path(csv_path: Path):
+        data = []
+        with open(csv_path, newline="", encoding="utf-8") as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                data.append(
+                    {
+                        "question": row["question"],
+                        "answer": row["answer"],
+                    }
+                )
+        dataset = (
+            grain.MapDataset.source(data)
+            .shuffle(seed=42)
+            .map(
+                lambda x: {
+                    "prompts": TEMPLATE.format(
+                        system_prompt=SYSTEM_PROMPT,
+                        question=x["question"],
+                    ),
+                    "question": x["question"],
+                    "answer": (
+                        x["answer"].split("####")[1].strip()
+                        if "####" in x["answer"]
+                        else None
+                    ),
+                }
+            )
+        )
+
+        return dataset
+
+    dataset_dir = Path(kagglehub.dataset_download(GSM8K_DATASET))
+    _train_ds = dataset_from_csv_path(dataset_dir / "main_train.csv")
+
+    train_ds = (
+        _train_ds[: int(len(_train_ds) * 0.8)].batch(TRAIN_BATCH_SIZE).repeat(N_EPOCHS)
+    )
+    valid_ds = _train_ds[int(len(_train_ds) * 0.8) :].batch(VALID_BATCH_SIZE).repeat()
+    test_ds = (
+        dataset_from_csv_path(dataset_dir / "main_test.csv")
+        .batch(TEST_BATCH_SIZE)
+        .repeat()
+    )
+
+    dataset_size = (
+        len(train_ds),
+        len(valid_ds),
+        len(test_ds),
+    )
+    print("DatasetSize:", dataset_size)
+
+    return train_ds, valid_ds, test_ds
 
 
 def load_model():
@@ -41,14 +141,12 @@ def load_model():
         print("This requires Kaggle account and APIkey")
         print("You also need to agree to the Gemma3 model license on KaggleHub first:")
         kagglehub.login()
-        os.environ["KAGGLEHUB_CACHE"] = str(CACHE_DIR.resolve())
         kagglehub.model_download(str(MODEL_PATH))
 
     weights_dir = CACHE_DIR / "models" / MODEL_PATH
     ckpt_path: Path = weights_dir / VARIANT_NAME
     params = params_lib.load_and_format_params(str(ckpt_path))
     transformer = transformer_lib.Transformer.from_params(params)
-    nnx.display(transformer)
 
     vocab_path: Path = weights_dir / "tokenizer.model"
     vocab = spm.SentencePieceProcessor()
@@ -58,28 +156,45 @@ def load_model():
         transformer=transformer,
         vocab=vocab,
     )
+    # test_sampler(sampler)
     return transformer, vocab, sampler
 
 
 def test_sampler(sampler):
     input_batch = [
         "\n# Python program for implementation of Bubble Sort\n\ndef bubbleSort(arr):",
+        "ハミルトニアンモンテカルロ法とは？",
     ]
 
     out_data = sampler(
         input_strings=input_batch,
-        total_generation_steps=1024,
+        total_generation_steps=300,
     )
-
     for input_string, out_string in zip(input_batch, out_data.text):
         print(f"Prompt:\n{input_string}\nOutput:\n{out_string}")
         print()
         print(10 * "#")
 
 
+def save_model(model: nnx.Module, dir_name: str):
+    if not CKPT_DIR.exists():
+        CKPT_DIR.mkdir()
+    _, state = nnx.split(model)
+    checkpointer = ocp.StandardCheckpointer()
+    checkpointer.save(str(CKPT_DIR / dir_name), state)
+    checkpointer.wait_until_finished()
+
+
+def reward_function(prompts: list[str], completions: list[str]):
+    is_match_format_exactly = [
+        0 if MATCH_FORMAT.search(res) is None else 3.0 for res in completions
+    ]
+
+
 def train(env_id: str, log_dir: str):
-    transformer, vocab, sampler = load_model()
-    # test_sampler(sampler)
+    train_ds, valid_ds, test_ds = load_dataset()
+    gemma, vocab, sampler = load_model()
+    save_model(gemma, "ref_model")
 
 
 def evaluate(env_id: str, log_dir: str, n_episodes: int, record_video: bool, seed: int):
