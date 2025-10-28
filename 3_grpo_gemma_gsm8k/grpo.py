@@ -68,7 +68,7 @@ def test_sampler(sampler):
 
     out_data = sampler(
         input_strings=input_batch,
-        total_generation_steps=300,  # The number of steps performed when generating a response.
+        total_generation_steps=1024,
     )
 
     for input_string, out_string in zip(input_batch, out_data.text):
@@ -79,8 +79,7 @@ def test_sampler(sampler):
 
 def train(env_id: str, log_dir: str):
     transformer, vocab, sampler = load_model()
-    test_sampler(sampler)
-    import pdb; pdb.set_trace()  # fmt: skip
+    # test_sampler(sampler)
 
 
 def evaluate(env_id: str, log_dir: str, n_episodes: int, record_video: bool, seed: int):

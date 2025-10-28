@@ -11,7 +11,8 @@
 ## TODO
 
 - Day1: まずはローカルでgemma3を動かす
-- Day2: 推論強化チューニングの手順調査
+- Day2: 推論強化チューニングの手順調査(DeepSeek-R1)
+- Day3: GRPOのその後調査
 - Day3: GRPOの実装調査
 - Day4: 実装開始
 
