@@ -274,15 +274,15 @@ def _reward_fn(
     # ==========================================================================
     # Total reward
     # ==========================================================================
-    scores_format = [
-        s1 + s2
+    format_scores = [
+        s1 if s1 > 0 else s2
         for s1, s2 in zip(
             scores_match_format_exactly,
             scores_match_format_approximately,
             strict=True,
         )
     ]
-    scores_accuracy = [
+    accuracy_scores = [
         s3 + s4
         for s3, s4 in zip(
             scores_answer,
@@ -290,7 +290,7 @@ def _reward_fn(
             strict=True,
         )
     ]
-    return scores_format, scores_accuracy
+    return format_scores, accuracy_scores
 
 
 def generate(
