@@ -22,6 +22,7 @@ dependencies = [
     { name = "jaxtyping" },
     { name = "kagglehub" },
     { name = "sentencepiece" },
+    { name = "tqdm" },
     { name = "treescope" },
     { name = "wandb" },
 ]
@@ -35,6 +36,7 @@ requires-dist = [
     { name = "jaxtyping", specifier = ">=0.3.2" },
     { name = "kagglehub", specifier = ">=0.3.13" },
     { name = "sentencepiece", specifier = ">=0.2.1" },
+    { name = "tqdm", specifier = ">=4.67.1" },
     { name = "treescope", specifier = ">=0.1.10" },
     { name = "wandb", specifier = ">=0.22.0" },
 ]

@@ -12,6 +12,7 @@ dependencies = [
     "jaxtyping>=0.3.2",
     "kagglehub>=0.3.13",
     "sentencepiece>=0.2.1",
+    "tqdm>=4.67.1",
     "treescope>=0.1.10",
     "wandb>=0.22.0",
 ]
