@@ -3,6 +3,7 @@ import subprocess
 import os
 import csv
 import re
+import time
 from pathlib import Path
 
 import click
@@ -158,7 +159,25 @@ def load_model():
         transformer=transformer,
         vocab=vocab,
     )
-    # test_sampler(sampler)
+
+    # ==========================================================================
+    # Test sampler
+    # ==========================================================================
+    # s = time.time()
+    # input_batch = [
+    #     "\n# Python program for implementation of Bubble Sort\n\ndef bubbleSort(arr):",
+    # ]
+
+    # out_data = sampler(
+    #     input_strings=input_batch,
+    #     total_generation_steps=300,  # The number of steps performed when generating a response.
+    # )
+    # for input_string, out_string in zip(input_batch, out_data.text):
+    #     print(f"Prompt:\n{input_string}\nOutput:\n{out_string}")
+    #     print()
+    #     print(10 * "#")
+    # print("Finished", time.time() - s)
+
     return transformer, vocab, sampler
 
 
